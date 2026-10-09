@@ -12,6 +12,9 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+  <!-- JSZip & FileSaver for 1-click automatic ZIP download -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
 </head>
 <body>
 
@@ -354,11 +357,20 @@
       </div>
       <div class="modal-footer">
         <button type="button" class="btn-modal-close" onclick="fecharModalMidias()">Fechar</button>
+        <button type="button" id="btnModalBaixarZip" class="btn-modal-zip" onclick="downloadZipDoPedidoAtual()">
+          <i class="fa-solid fa-file-zipper"></i> Baixar ZIP
+        </button>
         <a id="btnModalDriveFolder" href="#" target="_blank" class="btn-modal-drive">
-          <i class="fa-brands fa-google-drive"></i> Abrir Pasta no Google Drive
+          <i class="fa-brands fa-google-drive"></i> Abrir Drive
         </a>
       </div>
     </div>
+  </div>
+
+  <!-- FULL IMAGE LIGHTBOX VIEWER -->
+  <div class="lightbox-backdrop" id="imageLightbox" style="display:none;" onclick="fecharLightbox()">
+    <button class="lightbox-close">&times;</button>
+    <img id="lightboxImg" class="lightbox-image" alt="Visualização ampliada" onclick="event.stopPropagation();" />
   </div>
 
   <!-- OVERLAY DE LOADING / ENVIANDO -->

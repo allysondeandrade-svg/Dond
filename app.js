@@ -418,9 +418,27 @@ function filtrarPedidos() {
 }
 
 // =========================================================================================
-// MODAL DE VISUALIZAÇÃO DE MÍDIAS DO PEDIDO
+// MODAL DE VISUALIZAÇÃO DE MÍDIAS DO PEDIDO & LIGHTBOX
 // =========================================================================================
+let currentSelectedPedidoIndex = null;
+
+function formatDriveMediaUrl(url) {
+  if (!url) return '';
+  // Se for Base64 (salvo localmente), retorna direto
+  if (url.startsWith('data:')) return url;
+
+  // Se for link do Google Drive (/file/d/ID/view ou open?id=ID ou uc?id=ID)
+  const match = url.match(/\/d\/([a-zA-Z0-9_-]+)/) || url.match(/id=([a-zA-Z0-9_-]+)/);
+  if (match && match[1]) {
+    const fileId = match[1];
+    // Formato de alta resolução do Google Drive Thumbnail
+    return `https://drive.google.com/thumbnail?id=${fileId}&sz=w1600`;
+  }
+  return url;
+}
+
 function abrirModalMidias(index) {
+  currentSelectedPedidoIndex = index;
   const item = AppState.pedidos[index];
   if (!item) return;
 
@@ -435,19 +453,21 @@ function abrirModalMidias(index) {
   let html = '';
 
   if (item.etiqueta) {
+    const src = formatDriveMediaUrl(item.etiqueta);
     html += `
       <div class="modal-media-group">
-        <label><i class="fa-solid fa-barcode"></i> Foto da Etiqueta:</label>
-        <img src="${item.etiqueta}" class="modal-media-img" alt="Etiqueta" />
+        <label><i class="fa-solid fa-barcode"></i> Foto da Etiqueta (Toque para ampliar):</label>
+        <img src="${src}" class="modal-media-img" alt="Etiqueta" onclick="abrirLightbox('${src}')" onerror="this.onerror=null; this.src='${item.etiqueta}'" />
       </div>
     `;
   }
 
   if (item.caixa) {
+    const src = formatDriveMediaUrl(item.caixa);
     html += `
       <div class="modal-media-group">
-        <label><i class="fa-solid fa-box"></i> Foto da Caixa:</label>
-        <img src="${item.caixa}" class="modal-media-img" alt="Caixa" />
+        <label><i class="fa-solid fa-box"></i> Foto da Caixa (Toque para ampliar):</label>
+        <img src="${src}" class="modal-media-img" alt="Caixa" onclick="abrirLightbox('${src}')" onerror="this.onerror=null; this.src='${item.caixa}'" />
       </div>
     `;
   }
@@ -464,9 +484,12 @@ function abrirModalMidias(index) {
   if (item.avarias && item.avarias.length > 0) {
     html += `
       <div class="modal-media-group">
-        <label><i class="fa-solid fa-shield-halved"></i> Fotos de Avarias (${item.avarias.length}):</label>
+        <label><i class="fa-solid fa-shield-halved"></i> Fotos de Avarias (${item.avarias.length}) - Toque para ampliar:</label>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-          ${item.avarias.map(imgSrc => `<img src="${imgSrc}" class="modal-media-img" alt="Avaria" />`).join('')}
+          ${item.avarias.map(imgUrl => {
+            const src = formatDriveMediaUrl(imgUrl);
+            return `<img src="${src}" class="modal-media-img" alt="Avaria" onclick="abrirLightbox('${src}')" onerror="this.onerror=null; this.src='${imgUrl}'" />`;
+          }).join('')}
         </div>
       </div>
     `;
@@ -482,14 +505,117 @@ function abrirModalMidias(index) {
 
 function fecharModalMidias() {
   document.getElementById('mediaModal').style.display = 'none';
+  currentSelectedPedidoIndex = null;
 }
 
-function downloadMidias(index) {
-  const item = AppState.pedidos[index];
-  if (item && item.pastaDrive && item.pastaDrive !== '#') {
-    window.open(item.pastaDrive, '_blank');
-  } else {
-    abrirModalMidias(index);
+function abrirLightbox(imgSrc) {
+  const lightbox = document.getElementById('imageLightbox');
+  const lightboxImg = document.getElementById('lightboxImg');
+  lightboxImg.src = imgSrc;
+  lightbox.style.display = 'flex';
+}
+
+function fecharLightbox() {
+  document.getElementById('imageLightbox').style.display = 'none';
+}
+
+// =========================================================================================
+// DOWNLOAD AUTOMÁTICO DE ARQUIVO .ZIP COM TODAS AS FOTOS E VÍDEOS
+// =========================================================================================
+async function downloadMidias(index) {
+  currentSelectedPedidoIndex = index;
+  await downloadZipDoPedidoAtual();
+}
+
+async function downloadZipDoPedidoAtual() {
+  if (currentSelectedPedidoIndex === null) return;
+  const item = AppState.pedidos[currentSelectedPedidoIndex];
+  if (!item) return;
+
+  showLoading('Gerando Arquivo ZIP...', 'Baixando fotos e agrupando no ZIP...');
+
+  try {
+    const zip = new JSZip();
+    const folderName = `Disputa_${(item.plataforma || 'Plat')}_${(item.pedido || 'Pedido')}`.replace(/[\/\\:*?"<>|]/g, '_');
+    const zipFolder = zip.folder(folderName);
+
+    const promises = [];
+
+    // 1. Etiqueta
+    if (item.etiqueta) {
+      promises.push(
+        fetchMediaBlob(item.etiqueta).then(blob => {
+          if (blob) zipFolder.file('01_Etiqueta.jpg', blob);
+        })
+      );
+    }
+
+    // 2. Caixa
+    if (item.caixa) {
+      promises.push(
+        fetchMediaBlob(item.caixa).then(blob => {
+          if (blob) zipFolder.file('02_Caixa.jpg', blob);
+        })
+      );
+    }
+
+    // 3. Vídeo
+    if (item.video) {
+      promises.push(
+        fetchMediaBlob(item.video).then(blob => {
+          if (blob) zipFolder.file('03_Video_Abertura.mp4', blob);
+        })
+      );
+    }
+
+    // 4. Avarias
+    if (item.avarias && item.avarias.length > 0) {
+      item.avarias.forEach((avariaUrl, i) => {
+        promises.push(
+          fetchMediaBlob(avariaUrl).then(blob => {
+            if (blob) zipFolder.file(`04_Avaria_${i + 1}.jpg`, blob);
+          })
+        );
+      });
+    }
+
+    await Promise.all(promises);
+
+    const zipBlob = await zip.generateAsync({ type: 'blob' });
+    saveAs(zipBlob, `${folderName}.zip`);
+
+    showToast('Download do ZIP concluído com sucesso!', 'success');
+  } catch (err) {
+    console.error(err);
+    showToast('Erro ao gerar ZIP. Abrindo pasta do Google Drive...', 'error');
+    if (item.pastaDrive && item.pastaDrive !== '#') {
+      window.open(item.pastaDrive, '_blank');
+    }
+  } finally {
+    hideLoading();
+  }
+}
+
+async function fetchMediaBlob(url) {
+  try {
+    if (url.startsWith('data:')) {
+      const parts = url.split(',');
+      const mime = parts[0].match(/:(.*?);/)[1];
+      const bstr = atob(parts[1]);
+      let n = bstr.length;
+      const u8arr = new Uint8Array(n);
+      while (n--) {
+        u8arr[n] = bstr.charCodeAt(n);
+      }
+      return new Blob([u8arr], { type: mime });
+    }
+
+    const driveDirectUrl = formatDriveMediaUrl(url);
+    const response = await fetch(driveDirectUrl);
+    return await response.blob();
+  } catch (e) {
+    console.warn('Não foi possível obter o blob da mídia:', url, e);
+    return null;
   }
 }
 
