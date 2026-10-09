@@ -55,8 +55,114 @@ body.theme-dark {
   --card-bg: #1e293b;
   --text-primary: #f8fafc;
   --text-secondary: #cbd5e1;
-  --text-muted: #64748b;
+  --text-muted: #94a3b8;
   --border-color: #334155;
+}
+
+body.theme-dark .config-gear-btn {
+  color: #cbd5e1;
+}
+
+body.theme-dark .card-hero {
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+body.theme-dark .empty-state {
+  color: #94a3b8;
+}
+
+body.theme-dark .card-item {
+  background-color: #1e293b;
+  border-color: #334155;
+}
+
+body.theme-dark .item-icon {
+  color: #94a3b8;
+}
+
+body.theme-dark .item-title {
+  color: #f1f5f9;
+}
+
+body.theme-dark .form-input,
+body.theme-dark .form-select {
+  background-color: #0f172a;
+  color: #f8fafc;
+  border-color: #334155;
+}
+
+body.theme-dark .segment-btn {
+  background-color: #0f172a;
+  color: #94a3b8;
+}
+
+body.theme-dark .segment-btn.active {
+  background-color: var(--primary);
+  color: #ffffff;
+}
+
+body.theme-dark .btn-input-scan {
+  background-color: #334155;
+  color: #f8fafc;
+}
+
+body.theme-dark .pedidos-table th {
+  background-color: #0f172a;
+  color: #f8fafc;
+  border-bottom-color: #334155;
+}
+
+body.theme-dark .pedidos-table td {
+  border-bottom-color: #334155;
+  color: #f1f5f9;
+}
+
+body.theme-dark .pedidos-table tr:hover {
+  background-color: rgba(255, 255, 255, 0.04);
+}
+
+body.theme-dark .action-icon-btn {
+  color: #cbd5e1;
+}
+
+body.theme-dark .accordion-content {
+  background-color: #0f172a;
+}
+
+body.theme-dark .add-tag-box input {
+  background-color: #1e293b;
+  color: #f8fafc;
+  border-color: #334155;
+}
+
+body.theme-dark .add-tag-box button {
+  background-color: var(--primary);
+}
+
+body.theme-dark .tag-item {
+  background-color: #1e293b;
+  color: #f8fafc;
+  border-color: #334155;
+}
+
+body.theme-dark .theme-chip {
+  background-color: #1e293b;
+  color: #f8fafc;
+  border-color: #334155;
+}
+
+body.theme-dark .theme-chip.active {
+  background-color: rgba(var(--primary-rgb), 0.2);
+  color: var(--primary);
+}
+
+body.theme-dark .btn-modal-close {
+  background-color: #334155;
+  color: #f8fafc;
+}
+
+body.theme-dark .avarias-shelf {
+  background-color: #0f172a;
 }
 
 * {

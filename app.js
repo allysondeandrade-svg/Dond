@@ -111,14 +111,149 @@ function initMediaInputs() {
   });
 }
 
+// =========================================================================================
+// GRAVAÇÃO DE VÍDEO DIRETA (LIMITADA EM 1 MINUTO / 60 SEGUNDOS)
+// =========================================================================================
+let mediaRecorderInstance = null;
+let recordedVideoChunks = [];
+let videoStreamTrack = null;
+let recordTimerInterval = null;
+let recordSecondsLeft = 60;
+
 function triggerCapture(step) {
   AppState.currentCaptureStep = step;
 
   if (step === 'video') {
-    document.getElementById('cameraVideoInput').click();
+    // Tenta abrir gravador embutido com timer de 1 minuto
+    abrirGravadorVideo1Minuto();
   } else {
     document.getElementById('cameraPhotoInput').click();
   }
+}
+
+async function abrirGravadorVideo1Minuto() {
+  const modal = document.getElementById('videoRecordModal');
+  const videoEl = document.getElementById('videoLiveStream');
+  const timerBadge = document.getElementById('recordTimerBadge');
+  const timerText = document.getElementById('recordTimerText');
+  const btnIcon = document.getElementById('btnRecordIcon');
+  const btnLabel = document.getElementById('btnRecordLabel');
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: true
+    });
+    videoStreamTrack = stream;
+    videoEl.srcObject = stream;
+    modal.style.display = 'flex';
+    timerBadge.style.display = 'none';
+    timerText.textContent = '01:00';
+    btnLabel.textContent = 'Iniciar Gravação';
+    btnIcon.className = 'fa-solid fa-circle-dot';
+  } catch (err) {
+    console.warn("Acesso à câmera direta indisponível, usando input nativo:", err);
+    // Fallback para input de câmera nativo do celular
+    document.getElementById('cameraVideoInput').click();
+  }
+}
+
+function toggleRecordVideo() {
+  if (mediaRecorderInstance && mediaRecorderInstance.state === 'recording') {
+    pararGravacaoVideo();
+  } else {
+    iniciarGravacaoVideo();
+  }
+}
+
+function iniciarGravacaoVideo() {
+  if (!videoStreamTrack) return;
+  recordedVideoChunks = [];
+
+  let options = { mimeType: 'video/webm;codecs=vp8,opus' };
+  if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+    options = { mimeType: 'video/mp4' };
+    if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+      options = {};
+    }
+  }
+
+  try {
+    mediaRecorderInstance = new MediaRecorder(videoStreamTrack, options);
+  } catch (e) {
+    mediaRecorderInstance = new MediaRecorder(videoStreamTrack);
+  }
+
+  mediaRecorderInstance.ondataavailable = (e) => {
+    if (e.data && e.data.size > 0) {
+      recordedVideoChunks.push(e.data);
+    }
+  };
+
+  mediaRecorderInstance.onstop = async () => {
+    clearInterval(recordTimerInterval);
+    const mimeType = mediaRecorderInstance.mimeType || 'video/mp4';
+    const blob = new Blob(recordedVideoChunks, { type: mimeType });
+    
+    showLoading('Processando Vídeo...', 'Preparando mídias...');
+    try {
+      const base64 = await blobToBase64(blob);
+      handleCapturedVideo(base64, mimeType);
+    } catch (err) {
+      console.error(err);
+      showToast('Erro ao processar vídeo gravado.', 'error');
+    } finally {
+      hideLoading();
+      fecharModalGravacaoVideo();
+    }
+  };
+
+  mediaRecorderInstance.start(1000);
+  recordSecondsLeft = 60;
+
+  const timerBadge = document.getElementById('recordTimerBadge');
+  const timerText = document.getElementById('recordTimerText');
+  const btnLabel = document.getElementById('btnRecordLabel');
+  const btnIcon = document.getElementById('btnRecordIcon');
+
+  timerBadge.style.display = 'flex';
+  btnLabel.textContent = 'Parar Vídeo';
+  btnIcon.className = 'fa-solid fa-stop';
+
+  recordTimerInterval = setInterval(() => {
+    recordSecondsLeft--;
+    const mins = String(Math.floor(recordSecondsLeft / 60)).padStart(2, '0');
+    const secs = String(recordSecondsLeft % 60).padStart(2, '0');
+    timerText.textContent = `${mins}:${secs}`;
+
+    if (recordSecondsLeft <= 0) {
+      pararGravacaoVideo();
+    }
+  }, 1000);
+}
+
+function pararGravacaoVideo() {
+  if (mediaRecorderInstance && mediaRecorderInstance.state === 'recording') {
+    mediaRecorderInstance.stop();
+  }
+}
+
+function fecharModalGravacaoVideo() {
+  clearInterval(recordTimerInterval);
+  if (videoStreamTrack) {
+    videoStreamTrack.getTracks().forEach(t => t.stop());
+    videoStreamTrack = null;
+  }
+  document.getElementById('videoRecordModal').style.display = 'none';
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(blob);
+    reader.onloadend = () => resolve(reader.result);
+    reader.onerror = reject;
+  });
 }
 
 function handleCapturedPhoto(base64, mimeType) {
@@ -134,7 +269,7 @@ function handleCapturedPhoto(base64, mimeType) {
   } else if (step === 'caixa') {
     AppState.mediaData.caixa = { base64, mimeType };
     updateCaixaUI(base64);
-    showToast('Caixa capturada! Agora gravação de Vídeo.', 'info');
+    showToast('Caixa capturada! Agora gravação de Vídeo (1 min).', 'info');
     // Avança para a próxima etapa (vídeo)
     setTimeout(() => triggerCapture('video'), 450);
 
@@ -691,6 +826,200 @@ function abrirLightbox(imgSrc) {
 
 function fecharLightbox() {
   document.getElementById('imageLightbox').style.display = 'none';
+}
+
+// =========================================================================================
+// MESCLAGEM DE IMAGENS E GERAÇÃO DO KIT SHOPEE (MÁXIMO 3 ARQUIVOS)
+// =========================================================================================
+
+// 1. Unir Etiqueta + Caixa lado a lado
+async function mergeEtiquetaECaixa(etiquetaUrl, caixaUrl) {
+  if (!etiquetaUrl && !caixaUrl) return null;
+  if (!etiquetaUrl) return await fetchMediaBlob(caixaUrl);
+  if (!caixaUrl) return await fetchMediaBlob(etiquetaUrl);
+
+  const img1 = await loadImageElement(etiquetaUrl);
+  const img2 = await loadImageElement(caixaUrl);
+
+  const targetHeight = 1200;
+  const w1 = Math.round((img1.width * targetHeight) / img1.height);
+  const w2 = Math.round((img2.width * targetHeight) / img2.height);
+
+  const totalWidth = w1 + w2;
+  const canvas = document.createElement('canvas');
+  canvas.width = totalWidth;
+  canvas.height = targetHeight + 60; // 60px para cabeçalho com identificação
+
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#0f172a';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Faixas e textos superiores
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 28px Plus Jakarta Sans, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('1. ETIQUETA DE ENVIO', w1 / 2, 40);
+  ctx.fillText('2. EMBALAGEM / CAIXA', w1 + (w2 / 2), 40);
+
+  // Desenhar imagens
+  ctx.drawImage(img1, 0, 60, w1, targetHeight);
+  ctx.drawImage(img2, w1, 60, w2, targetHeight);
+
+  // Linha divisória central
+  ctx.strokeStyle = '#38bdf8';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(w1, 0);
+  ctx.lineTo(w1, canvas.height);
+  ctx.stroke();
+
+  return await canvasToBlob(canvas);
+}
+
+// 2. Unir todas as fotos de avarias em um mosaico único
+async function mergeAvariasMosaico(avariasUrls) {
+  if (!avariasUrls || avariasUrls.length === 0) return null;
+  if (avariasUrls.length === 1) return await fetchMediaBlob(avariasUrls[0]);
+
+  const images = [];
+  for (let url of avariasUrls) {
+    try {
+      const img = await loadImageElement(url);
+      images.push(img);
+    } catch (e) {
+      console.warn('Erro ao carregar imagem de avaria para mosaico:', e);
+    }
+  }
+
+  if (images.length === 0) return null;
+
+  const count = images.length;
+  let cols = 2;
+  if (count === 1) cols = 1;
+  else if (count >= 5) cols = 3;
+
+  const rows = Math.ceil(count / cols);
+  const cellWidth = 800;
+  const cellHeight = 800;
+  const headerHeight = 60;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = cols * cellWidth;
+  canvas.height = (rows * cellHeight) + headerHeight;
+
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#0f172a';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 30px Plus Jakarta Sans, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(`PAINEL DE AVARIAS DO PRODUTO (${count} FOTOS)`, canvas.width / 2, 42);
+
+  for (let i = 0; i < images.length; i++) {
+    const r = Math.floor(i / cols);
+    const c = i % cols;
+    const x = c * cellWidth;
+    const y = headerHeight + (r * cellHeight);
+
+    const img = images[i];
+    // Desenha proporcionalmente centralizado
+    ctx.drawImage(img, x + 10, y + 10, cellWidth - 20, cellHeight - 20);
+
+    // Tag identificadora no canto da foto
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.fillRect(x + 20, y + 20, 160, 44);
+    ctx.fillStyle = '#38bdf8';
+    ctx.font = 'bold 22px Plus Jakarta Sans, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(`Avaria #${i + 1}`, x + 35, y + 50);
+  }
+
+  return await canvasToBlob(canvas);
+}
+
+function loadImageElement(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = (err) => {
+      // Tenta fallback com proxy drive thumbnail se necessário
+      const formatted = formatDriveMediaUrl(src);
+      if (formatted !== src) {
+        const retryImg = new Image();
+        retryImg.crossOrigin = 'anonymous';
+        retryImg.onload = () => resolve(retryImg);
+        retryImg.onerror = reject;
+        retryImg.src = formatted;
+      } else {
+        reject(err);
+      }
+    };
+    img.src = formatDriveMediaUrl(src);
+  });
+}
+
+function canvasToBlob(canvas) {
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.90);
+  });
+}
+
+// 3. Download exclusivo do KIT SHOPEE (Exatamente até 3 arquivos)
+async function downloadKitShopee() {
+  if (currentSelectedPedidoIndex === null) return;
+  const item = AppState.pedidos[currentSelectedPedidoIndex];
+  if (!item) return;
+
+  const baseName = `Shopee_${(item.pedido || item.produto || 'Disputa')}`.replace(/[\/\\:*?"<>|]/g, '_');
+  showLoading('Gerando Kit Shopee...', 'Mesclando fotos em exatamente 3 arquivos...');
+
+  try {
+    const zip = new JSZip();
+    const folder = zip.folder(baseName);
+    let filesCount = 0;
+
+    // Arquivo 1: Etiqueta + Caixa mescladas
+    if (item.etiqueta || item.caixa) {
+      const mergedFoto1 = await mergeEtiquetaECaixa(item.etiqueta, item.caixa);
+      if (mergedFoto1) {
+        folder.file('01_Etiqueta_e_Caixa.jpg', mergedFoto1);
+        filesCount++;
+      }
+    }
+
+    // Arquivo 2: Vídeo de abertura
+    if (item.video) {
+      const videoBlob = await fetchMediaBlob(item.video);
+      if (videoBlob) {
+        folder.file('02_Video_Abertura.mp4', videoBlob);
+        filesCount++;
+      }
+    }
+
+    // Arquivo 3: Mosaico único com todas as fotos de avarias
+    if (item.avarias && item.avarias.length > 0) {
+      const mergedAvarias = await mergeAvariasMosaico(item.avarias);
+      if (mergedAvarias) {
+        folder.file('03_Mosaico_Avarias.jpg', mergedAvarias);
+        filesCount++;
+      }
+    }
+
+    if (filesCount > 0) {
+      const content = await zip.generateAsync({ type: 'blob' });
+      saveAs(content, `${baseName}_Kit3Arquivos.zip`);
+      showToast('Kit Shopee de 3 arquivos gerado com sucesso!', 'success');
+    } else {
+      showToast('Nenhuma mídia encontrada para gerar o Kit.', 'error');
+    }
+  } catch (err) {
+    console.error(err);
+    showToast('Erro ao gerar Kit Shopee: ' + err.message, 'error');
+  } finally {
+    hideLoading();
+  }
 }
 
 // =========================================================================================

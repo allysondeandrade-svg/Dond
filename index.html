@@ -349,6 +349,33 @@
   <input type="file" id="cameraPhotoInput" accept="image/*" capture="environment" style="display:none;" />
   <input type="file" id="cameraVideoInput" accept="video/*" capture="environment" style="display:none;" />
 
+  <!-- MODAL DE GRAVAÇÃO DE VÍDEO COM CONTADOR DE 60S -->
+  <div class="modal-backdrop" id="videoRecordModal" style="display:none;">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3><i class="fa-solid fa-video"></i> Gravar Vídeo (Máx. 1 min)</h3>
+        <button class="modal-close" onclick="fecharModalGravacaoVideo()">&times;</button>
+      </div>
+      <div class="modal-body" style="align-items: center; text-align: center;">
+        <div style="position: relative; width: 100%; border-radius: 12px; overflow: hidden; background: #000; min-height: 280px; display: flex; align-items: center; justify-content: center;">
+          <video id="videoLiveStream" autoplay playsinline muted style="width: 100%; height: 100%; object-fit: cover;"></video>
+          <div id="recordTimerBadge" style="display: none; position: absolute; top: 12px; right: 12px; background: rgba(239,68,68,0.9); color: white; padding: 4px 12px; border-radius: 20px; font-weight: 800; font-size: 0.9rem; align-items: center; gap: 6px;">
+            <i class="fa-solid fa-circle" style="font-size: 0.6rem; animation: pulse 1s infinite;"></i> <span id="recordTimerText">01:00</span>
+          </div>
+        </div>
+        <p style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 10px;">
+          O vídeo será finalizado automaticamente ao completar <strong>1 minuto</strong>.
+        </p>
+      </div>
+      <div class="modal-footer" style="justify-content: center; gap: 12px;">
+        <button type="button" class="btn-modal-close" onclick="fecharModalGravacaoVideo()">Cancelar</button>
+        <button type="button" id="btnStartStopRecord" class="btn-primary-action" style="width: auto; padding: 10px 20px;" onclick="toggleRecordVideo()">
+          <i class="fa-solid fa-circle-dot" id="btnRecordIcon"></i> <span id="btnRecordLabel">Iniciar Gravação</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- MODAL DE VISUALIZAÇÃO DE MÍDIAS DO PEDIDO -->
   <div class="modal-backdrop" id="mediaModal" style="display: none;">
     <div class="modal-dialog">
@@ -361,8 +388,11 @@
       </div>
       <div class="modal-footer">
         <button type="button" class="btn-modal-close" onclick="fecharModalMidias()">Fechar</button>
+        <button type="button" class="btn-modal-zip" style="background-color: #f97316;" onclick="downloadKitShopee()" title="Gera exatamente 3 arquivos para a Shopee">
+          <i class="fa-solid fa-bag-shopping"></i> Kit Shopee (3 Fotos/Vídeo)
+        </button>
         <button type="button" id="btnModalBaixarZip" class="btn-modal-zip" onclick="downloadZipDoPedidoAtual()">
-          <i class="fa-solid fa-file-zipper"></i> Baixar ZIP
+          <i class="fa-solid fa-file-zipper"></i> Baixar ZIP Geral
         </button>
         <a id="btnModalDriveFolder" href="#" target="_blank" class="btn-modal-drive">
           <i class="fa-brands fa-google-drive"></i> Abrir Drive
