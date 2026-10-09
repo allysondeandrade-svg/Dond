@@ -254,7 +254,7 @@ function removerAvaria(index) {
 }
 
 // =========================================================================================
-// FORMULÁRIO E SUBMISSÃO DE REGISTRO
+// FORMULÁRIO E SUBMISSÃO DE REGISTRO (UPLOAD EM SEGUNDO PLANO OTIMIZADO)
 // =========================================================================================
 function setDisputa(valor) {
   AppState.disputa = valor;
@@ -273,9 +273,14 @@ async function finalizarRegistro() {
     return;
   }
 
-  // Prepara payload
+  const recordId = 'reg_' + Date.now();
+  const dataAtual = new Date();
+  const dataFormatada = `${String(dataAtual.getDate()).padStart(2, '0')}/${String(dataAtual.getMonth() + 1).padStart(2, '0')}`;
+
+  // Payload completo para upload
   const payload = {
     action: 'saveRegistro',
+    id: recordId,
     plataforma: plataforma,
     produto: produto,
     pedido: pedido,
@@ -286,61 +291,54 @@ async function finalizarRegistro() {
     avarias: AppState.mediaData.avarias
   };
 
-  showLoading('Enviando Registro...', 'Salvando fotos e dados no Google Drive & Sheets...');
+  // Salva cópia local imediatamente (para o usuário já ver instantaneamente na tabela)
+  const novoItem = {
+    id: recordId,
+    data: dataFormatada,
+    plataforma: plataforma || 'Shopee',
+    produto: produto,
+    pedido: pedido || 'S/N',
+    disputa: AppState.disputa ? 'SIM' : 'NÃO',
+    pastaDrive: '#',
+    etiqueta: AppState.mediaData.etiqueta ? AppState.mediaData.etiqueta.base64 : '',
+    caixa: AppState.mediaData.caixa ? AppState.mediaData.caixa.base64 : '',
+    video: AppState.mediaData.video ? AppState.mediaData.video.base64 : '',
+    avarias: AppState.mediaData.avarias.map(a => a.base64)
+  };
 
+  AppState.pedidos.unshift(novoItem);
+  localStorage.setItem('dond_pedidos', JSON.stringify(AppState.pedidos));
+
+  // Resetar Formulário e Navegar imediatamente para a tabela
+  resetRegistroForm();
+  switchView('pedidos');
+  showToast('Registro salvo com sucesso! Enviando mídias em segundo plano...', 'success');
+
+  // Envio assíncrono para o Google Apps Script (usando fetch sem travar a interface)
+  if (AppState.scriptUrl) {
+    enviarRegistroEmSegundoPlano(payload);
+  }
+}
+
+async function enviarRegistroEmSegundoPlano(payload) {
   try {
-    if (AppState.scriptUrl) {
-      // Envio para o Google Apps Script
-      const response = await fetch(AppState.scriptUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // Evita preflight CORS no Apps Script
-        body: JSON.stringify(payload)
-      });
-      const res = await response.json();
-      
-      if (res.success) {
-        showToast('Registro enviado com sucesso ao Sheets & Drive!', 'success');
-      } else {
-        throw new Error(res.error || 'Erro no script');
+    const response = await fetch(AppState.scriptUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(payload)
+    });
+    const res = await response.json();
+    if (res.success) {
+      console.log('Sincronização com Google Drive e Sheets concluída com sucesso!');
+      // Atualiza link do drive no item local
+      const idx = AppState.pedidos.findIndex(p => p.id === payload.id);
+      if (idx !== -1 && res.folderUrl) {
+        AppState.pedidos[idx].pastaDrive = res.folderUrl;
+        localStorage.setItem('dond_pedidos', JSON.stringify(AppState.pedidos));
       }
-    } else {
-      // Modo Local / Demonstração
-      await new Promise(r => setTimeout(r, 1200));
-      showToast('Registro salvo localmente (Adicione a URL do Apps Script nas Configurações)!', 'info');
     }
-
-    // Salva cópia local para exibição imediata na aba Pedidos
-    const dataAtual = new Date();
-    const dataFormatada = `${String(dataAtual.getDate()).padStart(2, '0')}/${String(dataAtual.getMonth()+1).padStart(2, '0')} ${String(dataAtual.getHours()).padStart(2, '0')}:${String(dataAtual.getMinutes()).padStart(2, '0')}`;
-    
-    const novoItem = {
-      id: 'local_' + Date.now(),
-      data: dataFormatada,
-      plataforma: plataforma || 'Shopee',
-      produto: produto,
-      pedido: pedido || 'S/N',
-      disputa: AppState.disputa ? 'SIM' : 'NÃO',
-      pastaDrive: '#',
-      etiqueta: AppState.mediaData.etiqueta ? AppState.mediaData.etiqueta.base64 : '',
-      caixa: AppState.mediaData.caixa ? AppState.mediaData.caixa.base64 : '',
-      video: AppState.mediaData.video ? AppState.mediaData.video.base64 : '',
-      avarias: AppState.mediaData.avarias.map(a => a.base64)
-    };
-
-    AppState.pedidos.unshift(novoItem);
-    localStorage.setItem('dond_pedidos', JSON.stringify(AppState.pedidos));
-
-    // Resetar Formulário
-    resetRegistroForm();
-    
-    // Redireciona para aba Pedidos
-    switchView('pedidos');
-
   } catch (err) {
-    console.error(err);
-    showToast('Falha no envio: ' + err.message, 'error');
-  } finally {
-    hideLoading();
+    console.warn('Erro na transmissão em segundo plano:', err);
   }
 }
 
@@ -708,62 +706,79 @@ async function downloadZipDoPedidoAtual() {
   const item = AppState.pedidos[currentSelectedPedidoIndex];
   if (!item) return;
 
-  showLoading('Gerando Arquivo ZIP...', 'Baixando fotos e agrupando no ZIP...');
+  const folderName = `Disputa_${(item.plataforma || 'Plat')}_${(item.pedido || 'Pedido')}`.replace(/[\/\\:*?"<>|]/g, '_');
+  showLoading('Gerando Arquivo ZIP...', 'Empacotando fotos e vídeo da disputa...');
 
   try {
+    // 1. Se tivermos conexão com o Apps Script e o pedido tiver ID, tenta baixar o ZIP completo do Google Drive
+    if (AppState.scriptUrl && item.id && !item.id.startsWith('local_')) {
+      try {
+        const zipResp = await fetch(`${AppState.scriptUrl}?action=downloadZip&id=${encodeURIComponent(item.id)}`);
+        const zipBase64 = await zipResp.text();
+        
+        if (zipBase64 && zipBase64.length > 200 && !zipBase64.includes('error') && !zipBase64.includes('Nenhum')) {
+          const byteCharacters = atob(zipBase64);
+          const byteNumbers = new Array(byteCharacters.length);
+          for (let i = 0; i < byteCharacters.length; i++) {
+            byteNumbers[i] = byteCharacters.charCodeAt(i);
+          }
+          const byteArray = new Uint8Array(byteNumbers);
+          const blob = new Blob([byteArray], { type: 'application/zip' });
+          saveAs(blob, `${folderName}.zip`);
+          showToast('Download do ZIP concluído!', 'success');
+          hideLoading();
+          return;
+        }
+      } catch (errServerZip) {
+        console.warn('Tentando fallback local para o ZIP...', errServerZip);
+      }
+    }
+
+    // 2. Fallback Cliente (JSZip com mídias em cache ou Base64)
     const zip = new JSZip();
-    const folderName = `Disputa_${(item.plataforma || 'Plat')}_${(item.pedido || 'Pedido')}`.replace(/[\/\\:*?"<>|]/g, '_');
     const zipFolder = zip.folder(folderName);
+    let filesAdded = 0;
 
-    const promises = [];
-
-    // 1. Etiqueta
+    // Foto da Etiqueta
     if (item.etiqueta) {
-      promises.push(
-        fetchMediaBlob(item.etiqueta).then(blob => {
-          if (blob) zipFolder.file('01_Etiqueta.jpg', blob);
-        })
-      );
+      const b = await fetchMediaBlob(item.etiqueta);
+      if (b) { zipFolder.file('01_Etiqueta.jpg', b); filesAdded++; }
     }
 
-    // 2. Caixa
+    // Foto da Caixa
     if (item.caixa) {
-      promises.push(
-        fetchMediaBlob(item.caixa).then(blob => {
-          if (blob) zipFolder.file('02_Caixa.jpg', blob);
-        })
-      );
+      const b = await fetchMediaBlob(item.caixa);
+      if (b) { zipFolder.file('02_Caixa.jpg', b); filesAdded++; }
     }
 
-    // 3. Vídeo
+    // Vídeo de Abertura
     if (item.video) {
-      promises.push(
-        fetchMediaBlob(item.video).then(blob => {
-          if (blob) zipFolder.file('03_Video_Abertura.mp4', blob);
-        })
-      );
+      const b = await fetchMediaBlob(item.video);
+      if (b) { zipFolder.file('03_Video_Abertura.mp4', b); filesAdded++; }
     }
 
-    // 4. Avarias
+    // Fotos de Avarias
     if (item.avarias && item.avarias.length > 0) {
-      item.avarias.forEach((avariaUrl, i) => {
-        promises.push(
-          fetchMediaBlob(avariaUrl).then(blob => {
-            if (blob) zipFolder.file(`04_Avaria_${i + 1}.jpg`, blob);
-          })
-        );
-      });
+      for (let i = 0; i < item.avarias.length; i++) {
+        const b = await fetchMediaBlob(item.avarias[i]);
+        if (b) { zipFolder.file(`04_Avaria_${i + 1}.jpg`, b); filesAdded++; }
+      }
     }
 
-    await Promise.all(promises);
+    if (filesAdded > 0) {
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      saveAs(zipBlob, `${folderName}.zip`);
+      showToast('Download do ZIP concluído com sucesso!', 'success');
+    } else {
+      showToast('Abrindo pasta do Google Drive com as fotos...', 'info');
+      if (item.pastaDrive && item.pastaDrive !== '#') {
+        window.open(item.pastaDrive, '_blank');
+      }
+    }
 
-    const zipBlob = await zip.generateAsync({ type: 'blob' });
-    saveAs(zipBlob, `${folderName}.zip`);
-
-    showToast('Download do ZIP concluído com sucesso!', 'success');
   } catch (err) {
     console.error(err);
-    showToast('Erro ao gerar ZIP. Abrindo pasta do Google Drive...', 'error');
+    showToast('Erro ao compactar. Abrindo Google Drive...', 'error');
     if (item.pastaDrive && item.pastaDrive !== '#') {
       window.open(item.pastaDrive, '_blank');
     }
@@ -773,10 +788,11 @@ async function downloadZipDoPedidoAtual() {
 }
 
 async function fetchMediaBlob(url) {
+  if (!url) return null;
   try {
     if (url.startsWith('data:')) {
       const parts = url.split(',');
-      const mime = parts[0].match(/:(.*?);/)[1];
+      const mime = parts[0].match(/:(.*?);/)[1] || 'image/jpeg';
       const bstr = atob(parts[1]);
       let n = bstr.length;
       const u8arr = new Uint8Array(n);
@@ -788,9 +804,10 @@ async function fetchMediaBlob(url) {
 
     const driveDirectUrl = formatDriveMediaUrl(url);
     const response = await fetch(driveDirectUrl);
+    if (!response.ok) throw new Error('Falha no download da imagem');
     return await response.blob();
   } catch (e) {
-    console.warn('Não foi possível obter o blob da mídia:', url, e);
+    console.warn('Não foi possível obter o blob direto:', url, e);
     return null;
   }
 }

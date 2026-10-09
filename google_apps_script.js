@@ -11,6 +11,12 @@ function doGet(e) {
 
     const action = (e && e.parameter && e.parameter.action) || 'getAll';
 
+    // 1. Download de ZIP direto pelo Apps Script
+    if (action === 'downloadZip') {
+      const id = e.parameter.id;
+      return handleDownloadZip(sheet, id);
+    }
+
     if (action === 'getConfigs') {
       const produtos = getListFromColumn(sheet, 'Config_Produtos', 1);
       const plataformas = getListFromColumn(sheet, 'Config_Plataformas', 1);
@@ -98,7 +104,6 @@ function handleSaveRegistro(ss, data) {
   const mainFolder = getOrCreateMainFolder();
 
   const timestamp = new Date();
-  // Formato dd/MM conforme solicitado
   const dateStr = Utilities.formatDate(timestamp, Session.getScriptTimeZone(), "dd/MM");
   const folderName = `${Utilities.formatDate(timestamp, Session.getScriptTimeZone(), "yyyy-MM-dd_HH-mm")}_${data.plataforma || 'SemPlat'}_${data.pedido || 'SemPed'}`;
   
@@ -141,8 +146,9 @@ function handleSaveRegistro(ss, data) {
     });
   }
 
-  const recordId = Utilities.getUuid();
+  const recordId = data.id || Utilities.getUuid();
   const folderUrl = pedidoFolder.getUrl();
+  const folderId = pedidoFolder.getId();
   const avariasJson = JSON.stringify(mediaUrls.avarias);
 
   const newRow = [
@@ -156,12 +162,13 @@ function handleSaveRegistro(ss, data) {
     mediaUrls.etiqueta,
     mediaUrls.caixa,
     mediaUrls.video,
-    avariasJson
+    avariasJson,
+    folderId
   ];
 
   // INSERE NA LINHA 2 (Abaixo do cabeçalho)
   pedidosSheet.insertRowAfter(1);
-  pedidosSheet.getRange(2, 1, 1, 11).setValues([newRow]);
+  pedidosSheet.getRange(2, 1, 1, 12).setValues([newRow]);
 
   return {
     success: true,
@@ -170,6 +177,53 @@ function handleSaveRegistro(ss, data) {
     folderUrl: folderUrl,
     dateStr: dateStr
   };
+}
+
+// -------------------------------------------------------------
+// DOWNLOAD AUTOMÁTICO DE ZIP DO GOOGLE DRIVE
+// -------------------------------------------------------------
+function handleDownloadZip(ss, id) {
+  const pedidosSheet = ss.getSheetByName('Pedidos');
+  const lastRow = pedidosSheet.getLastRow();
+  if (lastRow <= 1) return ContentService.createTextOutput("Nenhum pedido cadastrado.");
+
+  const rows = pedidosSheet.getRange(2, 1, lastRow - 1, 12).getValues();
+  let targetFolderId = null;
+  let pedidoNome = "Disputa";
+
+  for (let i = 0; i < rows.length; i++) {
+    if (String(rows[i][0]) === String(id)) {
+      targetFolderId = rows[i][11]; // Coluna 12: FolderId
+      pedidoNome = `Disputa_${rows[i][2]}_${rows[i][4]}`;
+      // Fallback: extrai do folderUrl se a coluna 12 estiver vazia
+      if (!targetFolderId && rows[i][6]) {
+        const match = rows[i][6].match(/folders\/([a-zA-Z0-9_-]+)/);
+        if (match) targetFolderId = match[1];
+      }
+      break;
+    }
+  }
+
+  if (!targetFolderId) {
+    return ContentService.createTextOutput("Pasta do pedido não encontrada.");
+  }
+
+  const folder = DriveApp.getFolderById(targetFolderId);
+  const files = folder.getFiles();
+  const blobs = [];
+
+  while (files.hasNext()) {
+    const f = files.next();
+    blobs.push(f.getBlob());
+  }
+
+  if (blobs.length === 0) {
+    return ContentService.createTextOutput("Nenhum arquivo na pasta.");
+  }
+
+  const zipBlob = Utilities.zip(blobs, `${pedidoNome}.zip`);
+  return ContentService.createTextOutput(Utilities.base64Encode(zipBlob.getBytes()))
+    .setMimeType(ContentService.MimeType.TEXT);
 }
 
 // -------------------------------------------------------------
@@ -184,7 +238,7 @@ function handleUpdatePedido(ss, data) {
   let targetRow = -1;
 
   for (let i = 0; i < ids.length; i++) {
-    if (ids[i][0] === data.id) {
+    if (String(ids[i][0]) === String(data.id)) {
       targetRow = i + 2;
       break;
     }
@@ -215,7 +269,7 @@ function handleDeletePedido(ss, id) {
   let targetRow = -1;
 
   for (let i = 0; i < ids.length; i++) {
-    if (ids[i][0] === id) {
+    if (String(ids[i][0]) === String(id)) {
       targetRow = i + 2;
       break;
     }
@@ -266,9 +320,9 @@ function setupSheetsIfMissing(ss) {
     pedidosSheet = ss.insertSheet('Pedidos');
     pedidosSheet.appendRow([
       'ID', 'Data', 'Plataforma', 'Produto', 'Pedido', 'Disputa', 
-      'Pasta Drive', 'Foto Etiqueta', 'Foto Caixa', 'Vídeo', 'Fotos Avarias'
+      'Pasta Drive', 'Foto Etiqueta', 'Foto Caixa', 'Vídeo', 'Fotos Avarias', 'FolderId'
     ]);
-    pedidosSheet.getRange(1, 1, 1, 11).setFontWeight("bold").setBackground("#00bcd4").setFontColor("#ffffff");
+    pedidosSheet.getRange(1, 1, 1, 12).setFontWeight("bold").setBackground("#00bcd4").setFontColor("#ffffff");
     pedidosSheet.setFrozenRows(1);
   }
 
@@ -325,13 +379,12 @@ function getPedidosData(ss) {
   const lastRow = sheet.getLastRow();
   if (lastRow <= 1) return [];
 
-  // Como agora inserimos na linha 2, a ordem natural (linha 2 até o fim) já é do mais recente ao mais antigo
-  const values = sheet.getRange(2, 1, lastRow - 1, 11).getValues();
+  const values = sheet.getRange(2, 1, lastRow - 1, 12).getValues();
   const pedidos = [];
 
   for (let i = 0; i < values.length; i++) {
     const row = values[i];
-    if (!row[0]) continue; // Pula linhas vazias
+    if (!row[0]) continue;
 
     let avariasList = [];
     try {
@@ -342,7 +395,6 @@ function getPedidosData(ss) {
       avariasList = [];
     }
 
-    // Tratamento de data para dd/MM
     let dateFormatted = row[1];
     if (dateFormatted instanceof Date) {
       dateFormatted = Utilities.formatDate(dateFormatted, Session.getScriptTimeZone(), "dd/MM");
@@ -364,7 +416,8 @@ function getPedidosData(ss) {
       etiqueta: row[7],
       caixa: row[8],
       video: row[9],
-      avarias: avariasList
+      avarias: avariasList,
+      folderId: row[11] || ''
     });
   }
   return pedidos;
