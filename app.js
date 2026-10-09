@@ -360,7 +360,176 @@ function resetRegistroForm() {
 }
 
 // =========================================================================================
-// VIEW 2: HISTÓRICO DE PEDIDOS & VISUALIZAÇÃO
+// BARCODE / QR CODE SCANNER
+// =========================================================================================
+let html5QrCodeScanner = null;
+
+function iniciarLeitorBarcode() {
+  const modal = document.getElementById('barcodeScannerModal');
+  modal.style.display = 'flex';
+
+  if (!html5QrCodeScanner) {
+    html5QrCodeScanner = new Html5Qrcode("reader");
+  }
+
+  const qrConfig = { fps: 10, qrbox: { width: 250, height: 150 } };
+
+  html5QrCodeScanner.start(
+    { facingMode: "environment" },
+    qrConfig,
+    (decodedText) => {
+      // Sucesso na leitura do código de barras
+      document.getElementById('inputPedido').value = decodedText;
+      showToast(`Código lido: ${decodedText}`, 'success');
+      fecharLeitorBarcode();
+    },
+    (errorMessage) => {
+      // Leitura em andamento / frame sem código
+    }
+  ).catch(err => {
+    console.warn("Erro ao iniciar leitor de código:", err);
+    showToast("Permissão de câmera necessária para escanear.", "error");
+  });
+}
+
+function fecharLeitorBarcode() {
+  const modal = document.getElementById('barcodeScannerModal');
+  modal.style.display = 'none';
+  if (html5QrCodeScanner && html5QrCodeScanner.isScanning) {
+    html5QrCodeScanner.stop().catch(e => console.warn(e));
+  }
+}
+
+// =========================================================================================
+// EDIÇÃO E EXCLUSÃO DE PEDIDOS (SINCRONIZAÇÃO EM TEMPO REAL)
+// =========================================================================================
+let editDisputaValor = true;
+
+function abrirModalEdicao(index) {
+  const item = AppState.pedidos[index];
+  if (!item) return;
+
+  document.getElementById('editPedidoId').value = item.id;
+  document.getElementById('editData').value = formatarDataSimples(item.data);
+  document.getElementById('editPedido').value = item.pedido || '';
+
+  // Popula selects
+  const selPlat = document.getElementById('editPlataforma');
+  const selProd = document.getElementById('editProduto');
+
+  selPlat.innerHTML = AppState.plataformas.map(p => `<option value="${p}" ${p === item.plataforma ? 'selected' : ''}>${p}</option>`).join('');
+  selProd.innerHTML = AppState.produtos.map(p => `<option value="${p}" ${p === item.produto ? 'selected' : ''}>${p}</option>`).join('');
+
+  editDisputaValor = (item.disputa || '').toUpperCase() === 'SIM';
+  setEditDisputa(editDisputaValor);
+
+  document.getElementById('editPedidoModal').style.display = 'flex';
+}
+
+function fecharModalEdicao() {
+  document.getElementById('editPedidoModal').style.display = 'none';
+}
+
+function setEditDisputa(valor) {
+  editDisputaValor = valor;
+  document.getElementById('btnEditDisputaSim').classList.toggle('active', valor === true);
+  document.getElementById('btnEditDisputaNao').classList.toggle('active', valor === false);
+}
+
+async function salvarEdicaoPedido() {
+  const id = document.getElementById('editPedidoId').value;
+  const dataVal = document.getElementById('editData').value.trim();
+  const plataforma = document.getElementById('editPlataforma').value;
+  const produto = document.getElementById('editProduto').value;
+  const pedido = document.getElementById('editPedido').value.trim();
+
+  const index = AppState.pedidos.findIndex(p => p.id === id);
+  if (index === -1) return;
+
+  // Atualiza estado local imediatamente
+  AppState.pedidos[index].data = dataVal;
+  AppState.pedidos[index].plataforma = plataforma;
+  AppState.pedidos[index].produto = produto;
+  AppState.pedidos[index].pedido = pedido;
+  AppState.pedidos[index].disputa = editDisputaValor ? 'SIM' : 'NÃO';
+
+  localStorage.setItem('dond_pedidos', JSON.stringify(AppState.pedidos));
+  renderPedidosTable();
+  fecharModalEdicao();
+  showToast('Pedido atualizado no app!', 'success');
+
+  // Sincroniza com Google Sheets
+  if (AppState.scriptUrl) {
+    try {
+      fetch(AppState.scriptUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action: 'updatePedido',
+          id: id,
+          data: dataVal,
+          plataforma: plataforma,
+          produto: produto,
+          pedido: pedido,
+          disputa: editDisputaValor
+        })
+      });
+    } catch (e) {
+      console.warn('Erro ao sincronizar edição:', e);
+    }
+  }
+}
+
+async function excluirPedido(index) {
+  const item = AppState.pedidos[index];
+  if (!item) return;
+
+  if (!confirm(`Deseja realmente excluir o registro do pedido "${item.pedido || item.produto}"?`)) {
+    return;
+  }
+
+  const id = item.id;
+  // Remove localmente imediatamente
+  AppState.pedidos.splice(index, 1);
+  localStorage.setItem('dond_pedidos', JSON.stringify(AppState.pedidos));
+  renderPedidosTable();
+  showToast('Registro excluído!', 'info');
+
+  // Sincroniza com Google Sheets
+  if (AppState.scriptUrl) {
+    try {
+      fetch(AppState.scriptUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action: 'deletePedido',
+          id: id
+        })
+      });
+    } catch (e) {
+      console.warn('Erro ao sincronizar exclusão:', e);
+    }
+  }
+}
+
+function formatarDataSimples(dataStr) {
+  if (!dataStr) return '';
+  if (typeof dataStr === 'string') {
+    if (dataStr.includes('T')) {
+      const d = new Date(dataStr);
+      if (!isNaN(d.getTime())) {
+        return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
+      }
+    }
+    // Se for formato dd/mm ou dd/mm/yyyy hh:mm, extrai apenas dd/mm
+    const match = dataStr.match(/^(\d{2}\/\d{2})/);
+    if (match) return match[1];
+  }
+  return dataStr;
+}
+
+// =========================================================================================
+// VIEW 2: HISTÓRICO DE PEDIDOS & TABELA
 // =========================================================================================
 function renderPedidosTable(pedidosParaRenderizar = null) {
   const list = pedidosParaRenderizar || AppState.pedidos;
@@ -376,9 +545,10 @@ function renderPedidosTable(pedidosParaRenderizar = null) {
   emptyState.style.display = 'none';
   tbody.innerHTML = list.map((item, idx) => {
     const isSim = (item.disputa || '').toUpperCase() === 'SIM';
+    const dataFormatada = formatarDataSimples(item.data);
     return `
       <tr>
-        <td style="white-space: nowrap; font-weight: 700;">${item.data || ''}</td>
+        <td style="white-space: nowrap; font-weight: 700;">${dataFormatada}</td>
         <td>${item.plataforma || '-'}</td>
         <td style="font-weight: 700;">${item.produto || '-'}</td>
         <td><code>${item.pedido || '-'}</code></td>
@@ -392,8 +562,14 @@ function renderPedidosTable(pedidosParaRenderizar = null) {
             <button class="action-icon-btn" onclick="abrirModalMidias(${idx})" title="Visualizar Fotos/Vídeo">
               <i class="fa-regular fa-eye"></i>
             </button>
-            <button class="action-icon-btn" onclick="downloadMidias(${idx})" title="Baixar / Abrir Drive">
+            <button class="action-icon-btn" onclick="downloadMidias(${idx})" title="Baixar ZIP">
               <i class="fa-solid fa-download"></i>
+            </button>
+            <button class="action-icon-btn" onclick="abrirModalEdicao(${idx})" title="Editar Pedido">
+              <i class="fa-solid fa-pen-to-square"></i>
+            </button>
+            <button class="action-icon-btn" style="color: var(--danger);" onclick="excluirPedido(${idx})" title="Excluir Pedido">
+              <i class="fa-solid fa-trash-can"></i>
             </button>
           </div>
         </td>

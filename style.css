@@ -452,8 +452,36 @@ body {
   color: var(--danger);
 }
 
-.input-wrap {
-  flex: 1;
+.input-with-action {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.input-with-action .form-input {
+  padding-right: 48px;
+}
+
+.btn-input-scan {
+  position: absolute;
+  right: 6px;
+  background-color: #1e293b;
+  color: white;
+  border: none;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.15rem;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.btn-input-scan:hover {
+  background-color: var(--primary);
+  transform: scale(1.05);
 }
 
 .form-input,

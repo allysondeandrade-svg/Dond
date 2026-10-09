@@ -1,11 +1,8 @@
 // =========================================================================================
 // DOND - BACKEND GOOGLE APPS SCRIPT (Google Drive + Google Sheets)
 // =========================================================================================
-// Este script recebe os registros, fotos e vídeos do app Dond, cria pastas no Google Drive
-// e armazena os dados em abas do Google Sheets.
-// =========================================================================================
 
-const FOLDER_NAME = "DOND_DISPUTAS_MIDIAS"; // Nome da pasta principal criada no seu Google Drive
+const FOLDER_NAME = "DOND_DISPUTAS_MIDIAS";
 
 function doGet(e) {
   try {
@@ -56,19 +53,31 @@ function doPost(e) {
 
     const action = data.action || 'saveRegistro';
 
-    // 1. Salvar Novo Registro com Fotos e Vídeo
+    // 1. Salvar Novo Registro na LINHA 2 (Abaixo do cabeçalho)
     if (action === 'saveRegistro') {
       const result = handleSaveRegistro(sheet, data);
       return jsonResponse(result);
     }
 
-    // 2. Salvar Produtos (Configurações)
+    // 2. Editar Registro Existente (por ID)
+    if (action === 'updatePedido') {
+      const result = handleUpdatePedido(sheet, data);
+      return jsonResponse(result);
+    }
+
+    // 3. Excluir Registro (por ID)
+    if (action === 'deletePedido') {
+      const result = handleDeletePedido(sheet, data.id);
+      return jsonResponse(result);
+    }
+
+    // 4. Salvar Produtos (Configurações)
     if (action === 'saveProdutos') {
       setListToColumn(sheet, 'Config_Produtos', data.produtos || []);
       return jsonResponse({ success: true, message: "Produtos salvos com sucesso!" });
     }
 
-    // 3. Salvar Plataformas (Configurações)
+    // 5. Salvar Plataformas (Configurações)
     if (action === 'savePlataformas') {
       setListToColumn(sheet, 'Config_Plataformas', data.plataformas || []);
       return jsonResponse({ success: true, message: "Plataformas salvas com sucesso!" });
@@ -82,14 +91,15 @@ function doPost(e) {
 }
 
 // -------------------------------------------------------------
-// FUNÇÃO DE REGISTRO E UPLOAD PARA O DRIVE
+// FUNÇÃO DE REGISTRO NA LINHA 2 (EMPURRANDO DEMAIS PARA BAIXO)
 // -------------------------------------------------------------
 function handleSaveRegistro(ss, data) {
   const pedidosSheet = ss.getSheetByName('Pedidos');
   const mainFolder = getOrCreateMainFolder();
 
   const timestamp = new Date();
-  const dateStr = Utilities.formatDate(timestamp, Session.getScriptTimeZone(), "dd/MM/yyyy HH:mm");
+  // Formato dd/MM conforme solicitado
+  const dateStr = Utilities.formatDate(timestamp, Session.getScriptTimeZone(), "dd/MM");
   const folderName = `${Utilities.formatDate(timestamp, Session.getScriptTimeZone(), "yyyy-MM-dd_HH-mm")}_${data.plataforma || 'SemPlat'}_${data.pedido || 'SemPed'}`;
   
   // Cria subpasta para este pedido no Drive
@@ -121,7 +131,7 @@ function handleSaveRegistro(ss, data) {
     mediaUrls.video = file.getUrl();
   }
 
-  // Salvar Fotos Extras (Avarias - até 10)
+  // Salvar Fotos Extras (Avarias)
   if (data.avarias && Array.isArray(data.avarias)) {
     data.avarias.forEach((avaria, index) => {
       if (avaria && avaria.base64) {
@@ -131,13 +141,12 @@ function handleSaveRegistro(ss, data) {
     });
   }
 
+  const recordId = Utilities.getUuid();
   const folderUrl = pedidoFolder.getUrl();
   const avariasJson = JSON.stringify(mediaUrls.avarias);
 
-  // Adiciona linha na planilha Pedidos
-  // Colunas: [ID, Data, Plataforma, Produto, Pedido, Disputa, Pasta Drive, Etiqueta, Caixa, Vídeo, Avarias (JSON)]
   const newRow = [
-    Utilities.getUuid(),
+    recordId,
     dateStr,
     data.plataforma || '',
     data.produto || '',
@@ -150,21 +159,80 @@ function handleSaveRegistro(ss, data) {
     avariasJson
   ];
 
-  pedidosSheet.appendRow(newRow);
+  // INSERE NA LINHA 2 (Abaixo do cabeçalho)
+  pedidosSheet.insertRowAfter(1);
+  pedidosSheet.getRange(2, 1, 1, 11).setValues([newRow]);
 
   return {
     success: true,
-    message: "Registro e mídias salvos com sucesso!",
+    message: "Registro e mídias salvos na linha 2 com sucesso!",
+    id: recordId,
     folderUrl: folderUrl,
     dateStr: dateStr
   };
 }
 
 // -------------------------------------------------------------
+// ATUALIZAR PEDIDO (EDIÇÃO)
+// -------------------------------------------------------------
+function handleUpdatePedido(ss, data) {
+  const pedidosSheet = ss.getSheetByName('Pedidos');
+  const lastRow = pedidosSheet.getLastRow();
+  if (lastRow <= 1) return { success: false, error: "Nenhum pedido encontrado." };
+
+  const ids = pedidosSheet.getRange(2, 1, lastRow - 1, 1).getValues();
+  let targetRow = -1;
+
+  for (let i = 0; i < ids.length; i++) {
+    if (ids[i][0] === data.id) {
+      targetRow = i + 2;
+      break;
+    }
+  }
+
+  if (targetRow === -1) {
+    return { success: false, error: "Pedido não encontrado na planilha." };
+  }
+
+  if (data.data) pedidosSheet.getRange(targetRow, 2).setValue(data.data);
+  if (data.plataforma !== undefined) pedidosSheet.getRange(targetRow, 3).setValue(data.plataforma);
+  if (data.produto !== undefined) pedidosSheet.getRange(targetRow, 4).setValue(data.produto);
+  if (data.pedido !== undefined) pedidosSheet.getRange(targetRow, 5).setValue(data.pedido);
+  if (data.disputa !== undefined) pedidosSheet.getRange(targetRow, 6).setValue(data.disputa ? 'SIM' : 'NÃO');
+
+  return { success: true, message: "Pedido atualizado com sucesso!" };
+}
+
+// -------------------------------------------------------------
+// EXCLUIR PEDIDO
+// -------------------------------------------------------------
+function handleDeletePedido(ss, id) {
+  const pedidosSheet = ss.getSheetByName('Pedidos');
+  const lastRow = pedidosSheet.getLastRow();
+  if (lastRow <= 1) return { success: false, error: "Nenhum pedido encontrado." };
+
+  const ids = pedidosSheet.getRange(2, 1, lastRow - 1, 1).getValues();
+  let targetRow = -1;
+
+  for (let i = 0; i < ids.length; i++) {
+    if (ids[i][0] === id) {
+      targetRow = i + 2;
+      break;
+    }
+  }
+
+  if (targetRow === -1) {
+    return { success: false, error: "Registro não encontrado para exclusão." };
+  }
+
+  pedidosSheet.deleteRow(targetRow);
+  return { success: true, message: "Pedido excluído com sucesso!" };
+}
+
+// -------------------------------------------------------------
 // UTILITÁRIOS
 // -------------------------------------------------------------
 function saveBase64File(folder, fileName, base64Data, mimeType) {
-  // Remove prefixo data:...;base64, se houver
   const cleanBase64 = base64Data.replace(/^data:[^;]+;base64,/, '');
   const decoded = Utilities.base64Decode(cleanBase64);
   const ext = getExtensionFromMime(mimeType);
@@ -193,7 +261,6 @@ function getOrCreateMainFolder() {
 }
 
 function setupSheetsIfMissing(ss) {
-  // Aba Pedidos
   let pedidosSheet = ss.getSheetByName('Pedidos');
   if (!pedidosSheet) {
     pedidosSheet = ss.insertSheet('Pedidos');
@@ -205,17 +272,14 @@ function setupSheetsIfMissing(ss) {
     pedidosSheet.setFrozenRows(1);
   }
 
-  // Aba Config_Produtos
   let prodSheet = ss.getSheetByName('Config_Produtos');
   if (!prodSheet) {
     prodSheet = ss.insertSheet('Config_Produtos');
     prodSheet.appendRow(['Produtos Cadastrados']);
     prodSheet.getRange(1, 1).setFontWeight("bold").setBackground("#00bcd4").setFontColor("#ffffff");
     prodSheet.appendRow(['JBC FG 4 RISK']);
-    prodSheet.appendRow(['PRODUTO TESTE 01']);
   }
 
-  // Aba Config_Plataformas
   let platSheet = ss.getSheetByName('Config_Plataformas');
   if (!platSheet) {
     platSheet = ss.insertSheet('Config_Plataformas');
@@ -245,7 +309,6 @@ function setListToColumn(ss, sheetName, list) {
     sheet = ss.insertSheet(sheetName);
     sheet.appendRow([sheetName]);
   }
-  // Limpa registros anteriores a partir da linha 2
   const lastRow = sheet.getLastRow();
   if (lastRow > 1) {
     sheet.getRange(2, 1, lastRow - 1, 1).clearContent();
@@ -262,23 +325,37 @@ function getPedidosData(ss) {
   const lastRow = sheet.getLastRow();
   if (lastRow <= 1) return [];
 
+  // Como agora inserimos na linha 2, a ordem natural (linha 2 até o fim) já é do mais recente ao mais antigo
   const values = sheet.getRange(2, 1, lastRow - 1, 11).getValues();
-  // Ordena do mais recente ao mais antigo (ordem invertida das linhas)
   const pedidos = [];
-  for (let i = values.length - 1; i >= 0; i--) {
+
+  for (let i = 0; i < values.length; i++) {
     const row = values[i];
+    if (!row[0]) continue; // Pula linhas vazias
+
     let avariasList = [];
     try {
       if (row[10]) {
-        avariasList = JSON.parse(row[10]);
+        avariasList = typeof row[10] === 'string' ? JSON.parse(row[10]) : row[10];
       }
     } catch (e) {
       avariasList = [];
     }
 
+    // Tratamento de data para dd/MM
+    let dateFormatted = row[1];
+    if (dateFormatted instanceof Date) {
+      dateFormatted = Utilities.formatDate(dateFormatted, Session.getScriptTimeZone(), "dd/MM");
+    } else if (typeof dateFormatted === 'string' && dateFormatted.includes('T')) {
+      const d = new Date(dateFormatted);
+      if (!isNaN(d.getTime())) {
+        dateFormatted = Utilities.formatDate(d, Session.getScriptTimeZone(), "dd/MM");
+      }
+    }
+
     pedidos.push({
-      id: row[0],
-      data: row[1],
+      id: String(row[0]),
+      data: String(dateFormatted),
       plataforma: row[2],
       produto: row[3],
       pedido: row[4],

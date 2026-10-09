@@ -12,9 +12,10 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
-  <!-- JSZip & FileSaver for 1-click automatic ZIP download -->
+  <!-- JSZip, FileSaver & HTML5 QR/Barcode Scanner -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+  <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
 </head>
 <body>
 
@@ -145,11 +146,14 @@
             </div>
           </div>
 
-          <!-- PEDIDO -->
+          <!-- PEDIDO COM SCANNER DE CÓDIGO DE BARRAS -->
           <div class="form-row">
             <label for="inputPedido" class="form-label">Pedido</label>
-            <div class="input-wrap">
+            <div class="input-wrap input-with-action">
               <input type="text" id="inputPedido" class="form-input" placeholder="Nº do pedido ou rastreio..." />
+              <button type="button" class="btn-input-scan" onclick="iniciarLeitorBarcode()" title="Escanear Código de Barras / QR Code">
+                <i class="fa-solid fa-barcode"></i>
+              </button>
             </div>
           </div>
 
@@ -363,6 +367,82 @@
         <a id="btnModalDriveFolder" href="#" target="_blank" class="btn-modal-drive">
           <i class="fa-brands fa-google-drive"></i> Abrir Drive
         </a>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL LEITOR DE CÓDIGO DE BARRAS / QR CODE -->
+  <div class="modal-backdrop" id="barcodeScannerModal" style="display:none;">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3><i class="fa-solid fa-barcode"></i> Leitor de Código de Barras</h3>
+        <button class="modal-close" onclick="fecharLeitorBarcode()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="reader" style="width: 100%; min-height: 250px; border-radius: 12px; overflow: hidden;"></div>
+        <p style="font-size: 0.85rem; color: var(--text-secondary); text-align: center; margin-top: 10px;">
+          Aponte a câmera para o código de barras ou QR Code da etiqueta.
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-modal-close" onclick="fecharLeitorBarcode()">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL DE EDIÇÃO DE PEDIDO -->
+  <div class="modal-backdrop" id="editPedidoModal" style="display:none;">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3><i class="fa-solid fa-pen-to-square"></i> Editar Registro</h3>
+        <button class="modal-close" onclick="fecharModalEdicao()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <form id="editPedidoForm" onsubmit="event.preventDefault(); salvarEdicaoPedido();">
+          <input type="hidden" id="editPedidoId" />
+          
+          <div class="form-row" style="margin-bottom: 12px;">
+            <label class="form-label">Data (dd/mm)</label>
+            <div class="input-wrap">
+              <input type="text" id="editData" class="form-input" required />
+            </div>
+          </div>
+
+          <div class="form-row" style="margin-bottom: 12px;">
+            <label class="form-label">Plataforma</label>
+            <div class="input-wrap">
+              <select id="editPlataforma" class="form-select"></select>
+            </div>
+          </div>
+
+          <div class="form-row" style="margin-bottom: 12px;">
+            <label class="form-label">Produto *</label>
+            <div class="input-wrap">
+              <select id="editProduto" class="form-select" required></select>
+            </div>
+          </div>
+
+          <div class="form-row" style="margin-bottom: 12px;">
+            <label class="form-label">Pedido</label>
+            <div class="input-wrap">
+              <input type="text" id="editPedido" class="form-input" />
+            </div>
+          </div>
+
+          <div class="form-row" style="margin-bottom: 14px;">
+            <label class="form-label">Disputa</label>
+            <div class="segmented-control">
+              <button type="button" id="btnEditDisputaSim" class="segment-btn active" onclick="setEditDisputa(true)">Sim</button>
+              <button type="button" id="btnEditDisputaNao" class="segment-btn" onclick="setEditDisputa(false)">Não</button>
+            </div>
+          </div>
+
+          <div class="acc-actions">
+            <button type="submit" class="btn-sync-save">
+              <i class="fa-solid fa-check"></i> Salvar Alterações
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   </div>
