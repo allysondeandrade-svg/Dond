@@ -122,8 +122,20 @@ body {
 }
 
 .nav-tab.active {
-  background-color: #555b6e;
+  background-color: var(--primary);
   color: #ffffff;
+  box-shadow: 0 2px 8px rgba(var(--primary-rgb), 0.35);
+}
+
+.item-custom-icon {
+  width: 44px;
+  height: 44px;
+  object-fit: contain;
+  transition: var(--transition);
+}
+
+.card-item:hover .item-custom-icon {
+  transform: scale(1.08);
 }
 
 .config-gear-btn {
