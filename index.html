@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Dond - Gestão de Disputas & Devoluções</title>
+  <meta name="theme-color" content="#00bcd4" />
+  <link rel="icon" type="image/png" href="logo.png" />
+  <link rel="stylesheet" href="style.css" />
+  <!-- FontAwesome Icons & Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+</head>
+<body>
+
+  <!-- APP CONTAINER -->
+  <div class="app-container">
+
+    <!-- HEADER / NAVIGATION -->
+    <header class="app-header">
+      <div class="header-nav">
+        <button id="navNovoRegistroBtn" class="nav-tab active">
+          Novo Registro
+        </button>
+        <button id="navPedidosBtn" class="nav-tab">
+          Pedidos
+        </button>
+      </div>
+      <button id="navConfigBtn" class="config-gear-btn" title="Configurações">
+        <i class="fa-solid fa-gear"></i>
+      </button>
+    </header>
+
+    <!-- MAIN VIEWS -->
+    <main class="app-content">
+
+      <!-- ============================================== -->
+      <!-- VIEW 1: NOVO REGISTRO -->
+      <!-- ============================================== -->
+      <section id="viewNovoRegistro" class="view-panel active">
+        
+        <!-- MEDIA CAPTURE GRID -->
+        <div class="capture-container">
+          
+          <!-- ETIQUETA (CARTÃO PRINCIPAL GRANDE) -->
+          <div class="card-hero" id="cardEtiqueta" onclick="triggerCapture('etiqueta')">
+            <div class="preview-overlay" id="previewEtiquetaContainer">
+              <img id="imgEtiqueta" class="media-preview" alt="Etiqueta" style="display:none;" />
+              <div class="empty-state" id="emptyEtiqueta">
+                <i class="fa-solid fa-barcode hero-icon"></i>
+                <span class="hero-label">Etiqueta</span>
+                <span class="hero-sub">Toque para tirar a foto</span>
+              </div>
+            </div>
+            <button class="retake-badge" id="badgeEtiqueta" style="display:none;" onclick="event.stopPropagation(); triggerCapture('etiqueta')">
+              <i class="fa-solid fa-arrows-rotate"></i> Refazer
+            </button>
+          </div>
+
+          <!-- BOTÕES SECUNDÁRIOS: CAIXA, VÍDEO, AVARIAS -->
+          <div class="secondary-grid">
+            
+            <!-- CAIXA -->
+            <div class="card-item" id="cardCaixa" onclick="triggerCapture('caixa')">
+              <div class="card-icon-box">
+                <img id="imgCaixa" class="media-thumb" style="display:none;" alt="Caixa" />
+                <i class="fa-solid fa-box-open item-icon" id="emptyCaixaIcon"></i>
+              </div>
+              <span class="item-title">Caixa</span>
+              <button class="retake-thumb-btn" id="badgeCaixa" style="display:none;" onclick="event.stopPropagation(); triggerCapture('caixa')">
+                <i class="fa-solid fa-arrows-rotate"></i>
+              </button>
+            </div>
+
+            <!-- VÍDEO -->
+            <div class="card-item" id="cardVideo" onclick="triggerCapture('video')">
+              <div class="card-icon-box">
+                <video id="vidPreview" class="media-thumb" style="display:none;" playsinline muted></video>
+                <i class="fa-solid fa-circle-play item-icon" id="emptyVideoIcon"></i>
+              </div>
+              <span class="item-title">Vídeo</span>
+              <button class="retake-thumb-btn" id="badgeVideo" style="display:none;" onclick="event.stopPropagation(); triggerCapture('video')">
+                <i class="fa-solid fa-arrows-rotate"></i>
+              </button>
+            </div>
+
+            <!-- AVARIAS / FOTOS EXTRAS -->
+            <div class="card-item" id="cardAvarias" onclick="triggerCapture('avarias')">
+              <div class="card-icon-box" style="position: relative;">
+                <img id="imgAvariasPreview" class="media-thumb" style="display:none;" alt="Avarias" />
+                <i class="fa-solid fa-shield-halved item-icon" id="emptyAvariasIcon"></i>
+                <span class="badge-count" id="avariasCount" style="display:none;">0</span>
+              </div>
+              <span class="item-title">Avarias</span>
+              <button class="retake-thumb-btn" id="badgeAvarias" style="display:none;" onclick="event.stopPropagation(); triggerCapture('avarias')">
+                <i class="fa-solid fa-plus"></i>
+              </button>
+            </div>
+
+          </div>
+
+          <!-- MINI CAROUSEL DE AVARIAS COLETADAS (ATÉ 10) -->
+          <div class="avarias-shelf" id="avariasShelf" style="display: none;">
+            <div class="shelf-header">
+              <span>Fotos de Avarias (<strong id="shelfCount">0</strong>/10):</span>
+              <button type="button" class="btn-add-more" onclick="triggerCapture('avarias')">+ Adicionar Foto</button>
+            </div>
+            <div class="shelf-scroll" id="shelfList"></div>
+          </div>
+
+        </div>
+
+        <!-- FORMULÁRIO DE DADOS DO REGISTRO -->
+        <form id="registroForm" class="registro-form" onsubmit="event.preventDefault(); finalizarRegistro();">
+          
+          <!-- PLATAFORMA -->
+          <div class="form-row">
+            <label for="selectPlataforma" class="form-label">Plataforma</label>
+            <div class="input-wrap">
+              <select id="selectPlataforma" class="form-select">
+                <option value="">Selecione a plataforma...</option>
+                <option value="Shopee">Shopee</option>
+                <option value="Mercado Livre">Mercado Livre</option>
+                <option value="Amazon">Amazon</option>
+                <option value="Shein">Shein</option>
+                <option value="Magalu">Magalu</option>
+                <option value="TikTok Shop">TikTok Shop</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- PRODUTO (OBRIGATÓRIO) -->
+          <div class="form-row">
+            <label for="selectProduto" class="form-label">Produto <span class="required-star">*</span></label>
+            <div class="input-wrap">
+              <select id="selectProduto" class="form-select" required>
+                <option value="">Selecione o produto cadastrado...</option>
+                <option value="JBC FG 4 RISK">JBC FG 4 RISK</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- PEDIDO -->
+          <div class="form-row">
+            <label for="inputPedido" class="form-label">Pedido</label>
+            <div class="input-wrap">
+              <input type="text" id="inputPedido" class="form-input" placeholder="Nº do pedido ou rastreio..." />
+            </div>
+          </div>
+
+          <!-- DISPUTA (SIM / NÃO) -->
+          <div class="form-row">
+            <label class="form-label">Disputa</label>
+            <div class="segmented-control">
+              <button type="button" id="btnDisputaSim" class="segment-btn active" onclick="setDisputa(true)">Sim</button>
+              <button type="button" id="btnDisputaNao" class="segment-btn" onclick="setDisputa(false)">Não</button>
+            </div>
+          </div>
+
+          <!-- BOTÃO FINALIZAR -->
+          <div class="form-actions">
+            <button type="submit" id="btnFinalizar" class="btn-primary-action">
+              <i class="fa-solid fa-cloud-arrow-up"></i>
+              <span>Finalizar & Enviar Registro</span>
+            </button>
+          </div>
+
+        </form>
+
+      </section>
+
+
+      <!-- ============================================== -->
+      <!-- VIEW 2: PEDIDOS (HISTÓRICO) -->
+      <!-- ============================================== -->
+      <section id="viewPedidos" class="view-panel">
+        
+        <div class="pedidos-header-bar">
+          <div class="search-input-wrap">
+            <i class="fa-solid fa-magnifying-glass"></i>
+            <input type="text" id="pedidosSearch" placeholder="Buscar por pedido, produto..." oninput="filtrarPedidos()" />
+          </div>
+          <button class="btn-refresh" onclick="carregarDadosDoServidor()" title="Atualizar dados">
+            <i class="fa-solid fa-rotate-right" id="refreshIcon"></i>
+          </button>
+        </div>
+
+        <div class="pedidos-table-container">
+          <table class="pedidos-table">
+            <thead>
+              <tr>
+                <th>Data</th>
+                <th>Plataforma</th>
+                <th>Produto</th>
+                <th>Pedido</th>
+                <th>Disputa</th>
+                <th style="text-align: center;">Fotos / Ações</th>
+              </tr>
+            </thead>
+            <tbody id="pedidosTableBody">
+              <!-- Renderizado dinamicamente -->
+            </tbody>
+          </table>
+          <div id="pedidosEmptyState" class="pedidos-empty" style="display: none;">
+            <i class="fa-solid fa-folder-open"></i>
+            <p>Nenhum registro encontrado.</p>
+          </div>
+        </div>
+
+      </section>
+
+
+      <!-- ============================================== -->
+      <!-- VIEW 3: CONFIGURAÇÕES -->
+      <!-- ============================================== -->
+      <section id="viewConfiguracoes" class="view-panel">
+        
+        <div class="config-header">
+          <img src="logo.png" alt="Dond Logo" class="config-logo" />
+          <div class="config-app-title">
+            <h2>Dond</h2>
+            <p>Configurações e Integração Sheets</p>
+          </div>
+        </div>
+
+        <!-- ACCORDIONS -->
+        <div class="accordion-list">
+          
+          <!-- 1. CADASTRO DE PRODUTOS -->
+          <div class="accordion-item" id="accProdutos">
+            <button class="accordion-header" onclick="toggleAccordion('accProdutos')">
+              <div class="acc-title-wrap">
+                <i class="fa-solid fa-boxes-stacked"></i>
+                <span>Cadastro de Produtos</span>
+              </div>
+              <i class="fa-solid fa-chevron-down chevron-icon"></i>
+            </button>
+            <div class="accordion-content">
+              <div class="add-tag-box">
+                <input type="text" id="newProdutoInput" placeholder="Nome do novo produto..." />
+                <button type="button" onclick="adicionarProduto()"><i class="fa-solid fa-plus"></i> Adicionar</button>
+              </div>
+              <ul class="tag-list" id="listaProdutosConfig"></ul>
+              <div class="acc-actions">
+                <button class="btn-sync-save" onclick="salvarProdutosParaServidor()">
+                  <i class="fa-solid fa-cloud"></i> Salvar no Sheets
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 2. CADASTRO DE PLATAFORMAS -->
+          <div class="accordion-item" id="accPlataformas">
+            <button class="accordion-header" onclick="toggleAccordion('accPlataformas')">
+              <div class="acc-title-wrap">
+                <i class="fa-solid fa-store"></i>
+                <span>Cadastro de Plataformas</span>
+              </div>
+              <i class="fa-solid fa-chevron-down chevron-icon"></i>
+            </button>
+            <div class="accordion-content">
+              <div class="add-tag-box">
+                <input type="text" id="newPlataformaInput" placeholder="Ex: Mercado Livre, Shopee..." />
+                <button type="button" onclick="adicionarPlataforma()"><i class="fa-solid fa-plus"></i> Adicionar</button>
+              </div>
+              <ul class="tag-list" id="listaPlataformasConfig"></ul>
+              <div class="acc-actions">
+                <button class="btn-sync-save" onclick="salvarPlataformasParaServidor()">
+                  <i class="fa-solid fa-cloud"></i> Salvar no Sheets
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 3. COR DO APLICATIVO / TEMA -->
+          <div class="accordion-item" id="accCores">
+            <button class="accordion-header" onclick="toggleAccordion('accCores')">
+              <div class="acc-title-wrap">
+                <i class="fa-solid fa-palette"></i>
+                <span>Cor do Aplicativo</span>
+              </div>
+              <i class="fa-solid fa-chevron-down chevron-icon"></i>
+            </button>
+            <div class="accordion-content">
+              <p class="theme-intro">Selecione o tema de cor desejado para o Dond:</p>
+              <div class="theme-palette-grid">
+                <button class="theme-chip cyan active" onclick="setAppTheme('cyan', '#00bcd4')">
+                  <span class="color-dot" style="background:#00bcd4;"></span> Cyan Dond (Padrão)
+                </button>
+                <button class="theme-chip blue" onclick="setAppTheme('blue', '#2563eb')">
+                  <span class="color-dot" style="background:#2563eb;"></span> Azul Royal
+                </button>
+                <button class="theme-chip orange" onclick="setAppTheme('orange', '#f97316')">
+                  <span class="color-dot" style="background:#f97316;"></span> Laranja Shopee
+                </button>
+                <button class="theme-chip yellow" onclick="setAppTheme('yellow', '#eab308')">
+                  <span class="color-dot" style="background:#eab308;"></span> Amarelo ML
+                </button>
+                <button class="theme-chip purple" onclick="setAppTheme('purple', '#8b5cf6')">
+                  <span class="color-dot" style="background:#8b5cf6;"></span> Roxo Moderno
+                </button>
+                <button class="theme-chip dark" onclick="setAppTheme('dark', '#1e293b')">
+                  <span class="color-dot" style="background:#0f172a;"></span> Dark Mode
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 4. INTEGRAÇÃO GOOGLE APPS SCRIPT URL -->
+          <div class="accordion-item" id="accGoogleScript">
+            <button class="accordion-header" onclick="toggleAccordion('accGoogleScript')">
+              <div class="acc-title-wrap">
+                <i class="fa-solid fa-link"></i>
+                <span>URL do Google Apps Script</span>
+              </div>
+              <i class="fa-solid fa-chevron-down chevron-icon"></i>
+            </button>
+            <div class="accordion-content">
+              <p class="theme-intro">Cole aqui a URL de implantação da sua Web App do Apps Script:</p>
+              <div class="input-wrap">
+                <input type="url" id="scriptUrlInput" class="form-input" placeholder="https://script.google.com/macros/s/.../exec" />
+              </div>
+              <div class="acc-actions" style="margin-top: 10px;">
+                <button class="btn-sync-save" onclick="salvarScriptUrl()">
+                  <i class="fa-solid fa-floppy-disk"></i> Salvar URL
+                </button>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+      </section>
+
+    </main>
+
+  </div>
+
+  <!-- HIDDEN NATIVE CAMERA / FILE INPUTS -->
+  <input type="file" id="cameraPhotoInput" accept="image/*" capture="environment" style="display:none;" />
+  <input type="file" id="cameraVideoInput" accept="video/*" capture="environment" style="display:none;" />
+
+  <!-- MODAL DE VISUALIZAÇÃO DE MÍDIAS DO PEDIDO -->
+  <div class="modal-backdrop" id="mediaModal" style="display: none;">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 id="modalTitle">Mídias do Pedido</h3>
+        <button class="modal-close" onclick="fecharModalMidias()">&times;</button>
+      </div>
+      <div class="modal-body" id="modalMediaContent">
+        <!-- Itens injetados via JS -->
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-modal-close" onclick="fecharModalMidias()">Fechar</button>
+        <a id="btnModalDriveFolder" href="#" target="_blank" class="btn-modal-drive">
+          <i class="fa-brands fa-google-drive"></i> Abrir Pasta no Google Drive
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <!-- OVERLAY DE LOADING / ENVIANDO -->
+  <div class="loading-overlay" id="loadingOverlay" style="display: none;">
+    <div class="spinner-box">
+      <div class="spinner"></div>
+      <h4 id="loadingTitle">Enviando Registro...</h4>
+      <p id="loadingSubtitle">Compactando fotos e salvando no Google Drive & Sheets</p>
+    </div>
+  </div>
+
+  <!-- TOAST NOTIFICATIONS -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
