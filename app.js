@@ -404,6 +404,7 @@ function setDisputa(valor) {
 }
 
 async function finalizarRegistro() {
+  const btnFinalizar = document.getElementById('btnFinalizar');
   const produto = document.getElementById('selectProduto').value;
   const plataforma = document.getElementById('selectPlataforma').value;
   const pedido = document.getElementById('inputPedido').value.trim();
@@ -414,19 +415,31 @@ async function finalizarRegistro() {
     return;
   }
 
-  // Inicia barra de progresso em linha (não fecha a tela até concluir)
-  showLoading('Salvando Registro...', 'Preparando anotações e mídias...', 15, 'Compactando dados');
+  // Desabilita botão para impedir múltiplos envios acidentais
+  if (btnFinalizar) {
+    btnFinalizar.disabled = true;
+    btnFinalizar.style.opacity = '0.6';
+  }
+
+  // 1. Exibe a Barra de Carregamento Horizontal com Alerta de Segurança
+  showLoading(
+    'Salvando Registro...',
+    'Gravando na planilha e no dispositivo. Aguarde...',
+    15,
+    'Preparando dados...'
+  );
 
   const recordId = 'reg_' + Date.now();
   const dataAtual = new Date();
   const dataFormatada = `${String(dataAtual.getDate()).padStart(2, '0')}/${String(dataAtual.getMonth() + 1).padStart(2, '0')}`;
+  const produtoLimpo = formatarNomeProduto(produto);
 
   // Payload completo para upload
   const payload = {
     action: 'saveRegistro',
     id: recordId,
     plataforma: plataforma,
-    produto: produto,
+    produto: produtoLimpo,
     pedido: pedido,
     disputa: AppState.disputa,
     etiqueta: AppState.mediaData.etiqueta,
@@ -435,12 +448,12 @@ async function finalizarRegistro() {
     avarias: AppState.mediaData.avarias
   };
 
-  // 1. Salva cópia local imediatamente no LocalStorage (proteção contra perda)
+  // 2. Gravação imediata no LocalStorage com proteção total contra perda
   const novoItem = {
     id: recordId,
     data: dataFormatada,
     plataforma: plataforma || 'Shopee',
-    produto: produto,
+    produto: produtoLimpo,
     pedido: pedido || 'S/N',
     disputa: AppState.disputa ? 'SIM' : 'NÃO',
     pastaDrive: '#',
@@ -453,19 +466,19 @@ async function finalizarRegistro() {
   AppState.pedidos.unshift(novoItem);
   localStorage.setItem('dond_pedidos', JSON.stringify(AppState.pedidos));
 
-  updateLoadingProgress(35, 'Salvando na memória local...');
+  updateLoadingProgress(40, 'Salvo no dispositivo com sucesso!');
 
-  // Se houver conexão com o Apps Script configurada, envia e aguarda resposta segura
+  // 3. Envio seguro para o Google Apps Script & Google Sheets
   if (AppState.scriptUrl) {
-    updateLoadingProgress(55, 'Enviando para o Google Sheets & Drive...');
+    updateLoadingProgress(60, 'Enviando para o Google Sheets & Drive...');
     
-    // Simulação suave de avanço enquanto a requisição via rede é processada
+    // Animação contínua da barra enquanto a rede processa
     const progressTimer = setInterval(() => {
-      const currentVal = parseInt(document.getElementById('loadingProgressPercent').textContent) || 55;
-      if (currentVal < 88) {
-        updateLoadingProgress(currentVal + 4, 'Gravando na planilha...');
+      const currentVal = parseInt(document.getElementById('loadingProgressPercent').textContent) || 60;
+      if (currentVal < 90) {
+        updateLoadingProgress(currentVal + 3, 'Gravando na planilha...');
       }
-    }, 400);
+    }, 350);
 
     try {
       const response = await fetch(AppState.scriptUrl, {
@@ -475,39 +488,42 @@ async function finalizarRegistro() {
       });
       clearInterval(progressTimer);
 
-      updateLoadingProgress(92, 'Confirmando gravação...');
+      updateLoadingProgress(95, 'Confirmando gravação...');
       const res = await response.json();
 
       if (res.success) {
-        // Atualiza link do drive no item local
         const idx = AppState.pedidos.findIndex(p => p.id === payload.id);
         if (idx !== -1 && res.folderUrl) {
           AppState.pedidos[idx].pastaDrive = res.folderUrl;
           localStorage.setItem('dond_pedidos', JSON.stringify(AppState.pedidos));
         }
-        updateLoadingProgress(100, 'Concluído com sucesso!');
+        updateLoadingProgress(100, 'Salvo com sucesso!');
         await new Promise(r => setTimeout(r, 450));
-        showToast('Registro e anotações gravados com sucesso na planilha!', 'success');
+        showToast('Registro e anotação gravados com sucesso na planilha!', 'success');
       } else {
-        throw new Error(res.error || 'Erro retornado pelo servidor');
+        throw new Error(res.error || 'Erro no servidor do Apps Script');
       }
     } catch (err) {
       clearInterval(progressTimer);
-      console.warn('Erro na transmissão para a planilha:', err);
-      updateLoadingProgress(100, 'Salvo no dispositivo!');
+      console.warn('Aviso de conexão com o Sheets:', err);
+      updateLoadingProgress(100, 'Salvo localmente!');
       await new Promise(r => setTimeout(r, 450));
-      showToast('Anotação salva localmente no app! Verifique a conexão com o Sheets.', 'info');
+      showToast('Registro garantido no aplicativo! Verifique a conexão com o Google Sheets.', 'info');
     }
   } else {
     updateLoadingProgress(100, 'Concluído!');
-    await new Promise(r => setTimeout(r, 400));
-    showToast('Registro salvo no histórico do dispositivo.', 'success');
+    await new Promise(r => setTimeout(r, 350));
+    showToast('Registro salvo no histórico local.', 'success');
   }
 
-  // Oculta loading após conclusão segura
+  // Fecha loading e reabilita botão
   hideLoading();
+  if (btnFinalizar) {
+    btnFinalizar.disabled = false;
+    btnFinalizar.style.opacity = '1';
+  }
 
-  // Resetar Formulário e Navegar para a tabela
+  // Limpa formulário e navega com segurança para a tabela
   resetRegistroForm();
   switchView('pedidos');
 }
