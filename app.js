@@ -13,7 +13,7 @@ const AppState = {
     avarias: []     // [ { base64, mimeType }, ... ]
   },
   currentCaptureStep: 'etiqueta', // 'etiqueta' -> 'caixa' -> 'video' -> 'avarias'
-  produtos: ['JBC FG 4 RISK', 'PRODUTO TESTE 01'],
+  produtos: ['JBC FG 4 RISK'],
   plataformas: ['Shopee', 'Mercado Livre', 'Amazon', 'Shein', 'Magalu', 'TikTok Shop'],
   pedidos: [],
   scriptUrl: localStorage.getItem('dond_script_url') || 'https://script.google.com/macros/s/AKfycbwtc60Uq64_nhGo7h7oH5TuqrGyHwGyAnlsF07YhNvKno8H-C8O0RaROCk65KmLLlh5LQ/exec',
@@ -34,7 +34,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Carregar dados remotos do Google Sheets se houver scriptUrl
   if (AppState.scriptUrl) {
-    carregarDadosDoServidor();
+    carregarDadosDoServidor(true);
+    // Sincronização automática em segundo plano a cada 20 segundos
+    setInterval(() => {
+      if (AppState.scriptUrl && !document.hidden) {
+        carregarDadosDoServidor(false);
+      }
+    }, 20000);
   }
 });
 
@@ -408,6 +414,9 @@ async function finalizarRegistro() {
     return;
   }
 
+  // Inicia barra de progresso em linha (não fecha a tela até concluir)
+  showLoading('Salvando Registro...', 'Preparando anotações e mídias...', 15, 'Compactando dados');
+
   const recordId = 'reg_' + Date.now();
   const dataAtual = new Date();
   const dataFormatada = `${String(dataAtual.getDate()).padStart(2, '0')}/${String(dataAtual.getMonth() + 1).padStart(2, '0')}`;
@@ -426,7 +435,7 @@ async function finalizarRegistro() {
     avarias: AppState.mediaData.avarias
   };
 
-  // Salva cópia local imediatamente (para o usuário já ver instantaneamente na tabela)
+  // 1. Salva cópia local imediatamente no LocalStorage (proteção contra perda)
   const novoItem = {
     id: recordId,
     data: dataFormatada,
@@ -444,37 +453,63 @@ async function finalizarRegistro() {
   AppState.pedidos.unshift(novoItem);
   localStorage.setItem('dond_pedidos', JSON.stringify(AppState.pedidos));
 
-  // Resetar Formulário e Navegar imediatamente para a tabela
+  updateLoadingProgress(35, 'Salvando na memória local...');
+
+  // Se houver conexão com o Apps Script configurada, envia e aguarda resposta segura
+  if (AppState.scriptUrl) {
+    updateLoadingProgress(55, 'Enviando para o Google Sheets & Drive...');
+    
+    // Simulação suave de avanço enquanto a requisição via rede é processada
+    const progressTimer = setInterval(() => {
+      const currentVal = parseInt(document.getElementById('loadingProgressPercent').textContent) || 55;
+      if (currentVal < 88) {
+        updateLoadingProgress(currentVal + 4, 'Gravando na planilha...');
+      }
+    }, 400);
+
+    try {
+      const response = await fetch(AppState.scriptUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(payload)
+      });
+      clearInterval(progressTimer);
+
+      updateLoadingProgress(92, 'Confirmando gravação...');
+      const res = await response.json();
+
+      if (res.success) {
+        // Atualiza link do drive no item local
+        const idx = AppState.pedidos.findIndex(p => p.id === payload.id);
+        if (idx !== -1 && res.folderUrl) {
+          AppState.pedidos[idx].pastaDrive = res.folderUrl;
+          localStorage.setItem('dond_pedidos', JSON.stringify(AppState.pedidos));
+        }
+        updateLoadingProgress(100, 'Concluído com sucesso!');
+        await new Promise(r => setTimeout(r, 450));
+        showToast('Registro e anotações gravados com sucesso na planilha!', 'success');
+      } else {
+        throw new Error(res.error || 'Erro retornado pelo servidor');
+      }
+    } catch (err) {
+      clearInterval(progressTimer);
+      console.warn('Erro na transmissão para a planilha:', err);
+      updateLoadingProgress(100, 'Salvo no dispositivo!');
+      await new Promise(r => setTimeout(r, 450));
+      showToast('Anotação salva localmente no app! Verifique a conexão com o Sheets.', 'info');
+    }
+  } else {
+    updateLoadingProgress(100, 'Concluído!');
+    await new Promise(r => setTimeout(r, 400));
+    showToast('Registro salvo no histórico do dispositivo.', 'success');
+  }
+
+  // Oculta loading após conclusão segura
+  hideLoading();
+
+  // Resetar Formulário e Navegar para a tabela
   resetRegistroForm();
   switchView('pedidos');
-  showToast('Registro salvo com sucesso! Enviando mídias em segundo plano...', 'success');
-
-  // Envio assíncrono para o Google Apps Script (usando fetch sem travar a interface)
-  if (AppState.scriptUrl) {
-    enviarRegistroEmSegundoPlano(payload);
-  }
-}
-
-async function enviarRegistroEmSegundoPlano(payload) {
-  try {
-    const response = await fetch(AppState.scriptUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify(payload)
-    });
-    const res = await response.json();
-    if (res.success) {
-      console.log('Sincronização com Google Drive e Sheets concluída com sucesso!');
-      // Atualiza link do drive no item local
-      const idx = AppState.pedidos.findIndex(p => p.id === payload.id);
-      if (idx !== -1 && res.folderUrl) {
-        AppState.pedidos[idx].pastaDrive = res.folderUrl;
-        localStorage.setItem('dond_pedidos', JSON.stringify(AppState.pedidos));
-      }
-    }
-  } catch (err) {
-    console.warn('Erro na transmissão em segundo plano:', err);
-  }
 }
 
 function resetRegistroForm() {
@@ -645,6 +680,15 @@ async function excluirPedido(index) {
   }
 }
 
+function formatarNomeProduto(str) {
+  if (!str || typeof str !== 'string') return '';
+  const idx = str.indexOf('-');
+  if (idx !== -1) {
+    return str.substring(0, idx).trim();
+  }
+  return str.trim();
+}
+
 function formatarDataSimples(dataStr) {
   if (!dataStr) return '';
   if (typeof dataStr === 'string') {
@@ -679,11 +723,12 @@ function renderPedidosTable(pedidosParaRenderizar = null) {
   tbody.innerHTML = list.map((item, idx) => {
     const isSim = (item.disputa || '').toUpperCase() === 'SIM';
     const dataFormatada = formatarDataSimples(item.data);
+    const produtoFormatado = formatarNomeProduto(item.produto);
     return `
       <tr>
         <td style="white-space: nowrap; font-weight: 700;">${dataFormatada}</td>
         <td>${item.plataforma || '-'}</td>
-        <td style="font-weight: 700;">${item.produto || '-'}</td>
+        <td style="font-weight: 700;">${produtoFormatado || '-'}</td>
         <td><code>${item.pedido || '-'}</code></td>
         <td>
           <span class="table-badge-disputa ${isSim ? 'sim' : 'nao'}">
@@ -692,10 +737,7 @@ function renderPedidosTable(pedidosParaRenderizar = null) {
         </td>
         <td>
           <div class="table-actions">
-            <button class="action-icon-btn" onclick="abrirModalMidias(${idx})" title="Visualizar Fotos/Vídeo">
-              <i class="fa-regular fa-eye"></i>
-            </button>
-            <button class="action-icon-btn" onclick="downloadMidias(${idx})" title="Baixar ZIP">
+            <button class="action-icon-btn" onclick="downloadMidias(${idx})" title="Baixar ZIP (Fotos agrupadas + Vídeo)">
               <i class="fa-solid fa-download"></i>
             </button>
             <button class="action-icon-btn" onclick="abrirModalEdicao(${idx})" title="Editar Pedido">
@@ -1023,94 +1065,64 @@ async function downloadKitShopee() {
 }
 
 // =========================================================================================
-// DOWNLOAD AUTOMÁTICO DE ARQUIVO .ZIP COM TODAS AS FOTOS E VÍDEOS
+// DOWNLOAD AUTOMÁTICO DO KIT EM 3 ARQUIVOS (ETIQUETA+CAIXA MESCLADAS, VÍDEO E MOSAICO DE AVARIAS)
 // =========================================================================================
 async function downloadMidias(index) {
   currentSelectedPedidoIndex = index;
-  await downloadZipDoPedidoAtual();
-}
-
-async function downloadZipDoPedidoAtual() {
-  if (currentSelectedPedidoIndex === null) return;
-  const item = AppState.pedidos[currentSelectedPedidoIndex];
+  const item = AppState.pedidos[index];
   if (!item) return;
 
-  const folderName = `Disputa_${(item.plataforma || 'Plat')}_${(item.pedido || 'Pedido')}`.replace(/[\/\\:*?"<>|]/g, '_');
-  showLoading('Gerando Arquivo ZIP...', 'Empacotando fotos e vídeo da disputa...');
+  const baseName = `Disputa_${(item.plataforma || 'Plat')}_${(item.pedido || item.produto || 'Pedido')}`.replace(/[\/\\:*?"<>|]/g, '_');
+  showLoading('Gerando Arquivo ZIP...', 'Agrupando fotos e preparando Kit de 3 arquivos...', 10, 'Iniciando');
 
   try {
-    // 1. Se tivermos conexão com o Apps Script e o pedido tiver ID, tenta baixar o ZIP completo do Google Drive
-    if (AppState.scriptUrl && item.id && !item.id.startsWith('local_')) {
-      try {
-        const zipResp = await fetch(`${AppState.scriptUrl}?action=downloadZip&id=${encodeURIComponent(item.id)}`);
-        const zipBase64 = await zipResp.text();
-        
-        if (zipBase64 && zipBase64.length > 200 && !zipBase64.includes('error') && !zipBase64.includes('Nenhum')) {
-          const byteCharacters = atob(zipBase64);
-          const byteNumbers = new Array(byteCharacters.length);
-          for (let i = 0; i < byteCharacters.length; i++) {
-            byteNumbers[i] = byteCharacters.charCodeAt(i);
-          }
-          const byteArray = new Uint8Array(byteNumbers);
-          const blob = new Blob([byteArray], { type: 'application/zip' });
-          saveAs(blob, `${folderName}.zip`);
-          showToast('Download do ZIP concluído!', 'success');
-          hideLoading();
-          return;
-        }
-      } catch (errServerZip) {
-        console.warn('Tentando fallback local para o ZIP...', errServerZip);
-      }
-    }
-
-    // 2. Fallback Cliente (JSZip com mídias em cache ou Base64)
     const zip = new JSZip();
-    const zipFolder = zip.folder(folderName);
-    let filesAdded = 0;
+    const folder = zip.folder(baseName);
+    let filesCount = 0;
 
-    // Foto da Etiqueta
-    if (item.etiqueta) {
-      const b = await fetchMediaBlob(item.etiqueta);
-      if (b) { zipFolder.file('01_Etiqueta.jpg', b); filesAdded++; }
+    // 1. Arquivo 1: Etiqueta + Caixa mescladas lado a lado
+    if (item.etiqueta || item.caixa) {
+      updateLoadingProgress(35, 'Mesclando Etiqueta e Caixa...');
+      const mergedFoto1 = await mergeEtiquetaECaixa(item.etiqueta, item.caixa);
+      if (mergedFoto1) {
+        folder.file('01_Etiqueta_e_Caixa.jpg', mergedFoto1);
+        filesCount++;
+      }
     }
 
-    // Foto da Caixa
-    if (item.caixa) {
-      const b = await fetchMediaBlob(item.caixa);
-      if (b) { zipFolder.file('02_Caixa.jpg', b); filesAdded++; }
-    }
-
-    // Vídeo de Abertura
+    // 2. Arquivo 2: Vídeo de abertura
     if (item.video) {
-      const b = await fetchMediaBlob(item.video);
-      if (b) { zipFolder.file('03_Video_Abertura.mp4', b); filesAdded++; }
+      updateLoadingProgress(60, 'Empacotando Vídeo...');
+      const videoBlob = await fetchMediaBlob(item.video);
+      if (videoBlob) {
+        folder.file('02_Video_Abertura.mp4', videoBlob);
+        filesCount++;
+      }
     }
 
-    // Fotos de Avarias
+    // 3. Arquivo 3: Mosaico único com todas as fotos de avarias
     if (item.avarias && item.avarias.length > 0) {
-      for (let i = 0; i < item.avarias.length; i++) {
-        const b = await fetchMediaBlob(item.avarias[i]);
-        if (b) { zipFolder.file(`04_Avaria_${i + 1}.jpg`, b); filesAdded++; }
+      updateLoadingProgress(80, 'Gerando painel de fotos de avarias...');
+      const mergedAvarias = await mergeAvariasMosaico(item.avarias);
+      if (mergedAvarias) {
+        folder.file('03_Mosaico_Avarias.jpg', mergedAvarias);
+        filesCount++;
       }
     }
 
-    if (filesAdded > 0) {
-      const zipBlob = await zip.generateAsync({ type: 'blob' });
-      saveAs(zipBlob, `${folderName}.zip`);
-      showToast('Download do ZIP concluído com sucesso!', 'success');
+    if (filesCount > 0) {
+      updateLoadingProgress(95, 'Compactando arquivo .ZIP...');
+      const content = await zip.generateAsync({ type: 'blob' });
+      saveAs(content, `${baseName}_KitCompleto.zip`);
+      updateLoadingProgress(100, 'Download pronto!');
+      await new Promise(r => setTimeout(r, 400));
+      showToast('Download do ZIP com fotos agrupadas concluído!', 'success');
     } else {
-      showToast('Abrindo pasta do Google Drive com as fotos...', 'info');
-      if (item.pastaDrive && item.pastaDrive !== '#') {
-        window.open(item.pastaDrive, '_blank');
-      }
+      showToast('Nenhuma mídia encontrada para este registro.', 'error');
     }
-
   } catch (err) {
     console.error(err);
-    showToast('Erro ao compactar. Abrindo Google Drive...', 'error');
-    if (item.pastaDrive && item.pastaDrive !== '#') {
-      window.open(item.pastaDrive, '_blank');
-    }
+    showToast('Erro ao compactar ZIP: ' + err.message, 'error');
   } finally {
     hideLoading();
   }
@@ -1155,8 +1167,11 @@ function renderDropdowns() {
   const selectProd = document.getElementById('selectProduto');
   const selectPlat = document.getElementById('selectPlataforma');
 
+  // Mapeia produtos formatando antes do hífen e removendo duplicatas
+  const produtosLimpos = [...new Set(AppState.produtos.map(p => formatarNomeProduto(p)))];
+
   selectProd.innerHTML = '<option value="">Selecione o produto cadastrado...</option>' +
-    AppState.produtos.map(p => `<option value="${p}">${p}</option>`).join('');
+    produtosLimpos.map(p => `<option value="${p}">${p}</option>`).join('');
 
   selectPlat.innerHTML = '<option value="">Selecione a plataforma...</option>' +
     AppState.plataformas.map(p => `<option value="${p}">${p}</option>`).join('');
@@ -1168,7 +1183,7 @@ function renderConfigLists() {
 
   listProd.innerHTML = AppState.produtos.map((p, idx) => `
     <li class="tag-item">
-      <span>${p}</span>
+      <span>${formatarNomeProduto(p)}</span>
       <button class="btn-remove-tag" onclick="removerProduto(${idx})"><i class="fa-solid fa-trash-can"></i></button>
     </li>
   `).join('');
@@ -1183,9 +1198,11 @@ function renderConfigLists() {
 
 function adicionarProduto() {
   const input = document.getElementById('newProdutoInput');
-  const val = input.value.trim();
+  const val = formatarNomeProduto(input.value.trim());
   if (!val) return;
-  AppState.produtos.push(val);
+  if (!AppState.produtos.includes(val)) {
+    AppState.produtos.push(val);
+  }
   input.value = '';
   saveLocalConfigs();
   renderDropdowns();
@@ -1204,7 +1221,9 @@ function adicionarPlataforma() {
   const input = document.getElementById('newPlataformaInput');
   const val = input.value.trim();
   if (!val) return;
-  AppState.plataformas.push(val);
+  if (!AppState.plataformas.includes(val)) {
+    AppState.plataformas.push(val);
+  }
   input.value = '';
   saveLocalConfigs();
   renderDropdowns();
@@ -1226,10 +1245,11 @@ async function salvarProdutosParaServidor() {
   }
   showLoading('Sincronizando...', 'Salvando lista de produtos no Google Sheets...');
   try {
+    const produtosFormatados = AppState.produtos.map(p => formatarNomeProduto(p));
     const res = await fetch(AppState.scriptUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action: 'saveProdutos', produtos: AppState.produtos })
+      body: JSON.stringify({ action: 'saveProdutos', produtos: produtosFormatados })
     });
     const json = await res.json();
     if (json.success) showToast('Produtos sincronizados com a planilha!', 'success');
@@ -1267,11 +1287,11 @@ function salvarScriptUrl() {
   localStorage.setItem('dond_script_url', url);
   showToast('URL do Apps Script salva com sucesso!', 'success');
   if (url) {
-    carregarDadosDoServidor();
+    carregarDadosDoServidor(true);
   }
 }
 
-async function carregarDadosDoServidor() {
+async function carregarDadosDoServidor(notificar = false) {
   if (!AppState.scriptUrl) return;
   
   const refreshIcon = document.getElementById('refreshIcon');
@@ -1282,19 +1302,30 @@ async function carregarDadosDoServidor() {
     const data = await res.json();
 
     if (data.success) {
-      if (data.produtos && data.produtos.length) AppState.produtos = data.produtos;
-      if (data.plataformas && data.plataformas.length) AppState.plataformas = data.plataformas;
-      if (data.pedidos && data.pedidos.length) AppState.pedidos = data.pedidos;
+      if (data.produtos && data.produtos.length) {
+        AppState.produtos = data.produtos.map(p => formatarNomeProduto(p));
+      }
+      if (data.plataformas && data.plataformas.length) {
+        AppState.plataformas = data.plataformas;
+      }
+      if (data.pedidos && Array.isArray(data.pedidos)) {
+        AppState.pedidos = data.pedidos.map(p => ({
+          ...p,
+          produto: formatarNomeProduto(p.produto)
+        }));
+      }
 
       saveLocalConfigs();
       localStorage.setItem('dond_pedidos', JSON.stringify(AppState.pedidos));
       renderDropdowns();
       renderConfigLists();
       renderPedidosTable();
-      showToast('Dados sincronizados com o Sheets!', 'info');
+      if (notificar) {
+        showToast('Sincronizado com o Google Sheets!', 'info');
+      }
     }
   } catch (e) {
-    console.warn('Erro ao carregar dados do script:', e);
+    console.warn('Erro ao sincronizar dados com o Google Sheets:', e);
   } finally {
     if (refreshIcon) refreshIcon.classList.remove('fa-spin');
   }
@@ -1403,10 +1434,22 @@ function fileToBase64(file) {
 }
 
 // LOADING & TOAST
-function showLoading(title = 'Carregando...', sub = 'Por favor aguarde') {
+function showLoading(title = 'Carregando...', sub = 'Por favor aguarde', percent = 0, stepText = '') {
   document.getElementById('loadingTitle').textContent = title;
   document.getElementById('loadingSubtitle').textContent = sub;
+  updateLoadingProgress(percent, stepText || `${percent}%`);
   document.getElementById('loadingOverlay').style.display = 'flex';
+}
+
+function updateLoadingProgress(percent, stepText) {
+  const p = Math.min(100, Math.max(0, Math.round(percent)));
+  const bar = document.getElementById('loadingProgressBar');
+  const percentEl = document.getElementById('loadingProgressPercent');
+  const stepEl = document.getElementById('loadingProgressStep');
+
+  if (bar) bar.style.width = `${p}%`;
+  if (percentEl) percentEl.textContent = `${p}%`;
+  if (stepEl && stepText) stepEl.textContent = stepText;
 }
 
 function hideLoading() {

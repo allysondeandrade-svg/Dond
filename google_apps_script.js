@@ -11,12 +11,6 @@ function doGet(e) {
 
     const action = (e && e.parameter && e.parameter.action) || 'getAll';
 
-    // 1. Download de ZIP direto pelo Apps Script
-    if (action === 'downloadZip') {
-      const id = e.parameter.id;
-      return handleDownloadZip(sheet, id);
-    }
-
     if (action === 'getConfigs') {
       const produtos = getListFromColumn(sheet, 'Config_Produtos', 1);
       const plataformas = getListFromColumn(sheet, 'Config_Plataformas', 1);
@@ -101,129 +95,97 @@ function doPost(e) {
 // -------------------------------------------------------------
 function handleSaveRegistro(ss, data) {
   const pedidosSheet = ss.getSheetByName('Pedidos');
-  const mainFolder = getOrCreateMainFolder();
+  if (!pedidosSheet) {
+    throw new Error("Aba 'Pedidos' não encontrada na planilha.");
+  }
 
   const timestamp = new Date();
   const dateStr = Utilities.formatDate(timestamp, Session.getScriptTimeZone(), "dd/MM");
-  const folderName = `${Utilities.formatDate(timestamp, Session.getScriptTimeZone(), "yyyy-MM-dd_HH-mm")}_${data.plataforma || 'SemPlat'}_${data.pedido || 'SemPed'}`;
-  
-  // Cria subpasta para este pedido no Drive
-  const pedidoFolder = mainFolder.createFolder(folderName);
-  pedidoFolder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-
-  const mediaUrls = {
-    etiqueta: '',
-    caixa: '',
-    video: '',
-    avarias: []
-  };
-
-  // Salvar Foto da Etiqueta
-  if (data.etiqueta && data.etiqueta.base64) {
-    const file = saveBase64File(pedidoFolder, '01_Etiqueta', data.etiqueta.base64, data.etiqueta.mimeType || 'image/jpeg');
-    mediaUrls.etiqueta = file.getUrl();
-  }
-
-  // Salvar Foto da Caixa
-  if (data.caixa && data.caixa.base64) {
-    const file = saveBase64File(pedidoFolder, '02_Caixa', data.caixa.base64, data.caixa.mimeType || 'image/jpeg');
-    mediaUrls.caixa = file.getUrl();
-  }
-
-  // Salvar Vídeo
-  if (data.video && data.video.base64) {
-    const file = saveBase64File(pedidoFolder, '03_Video_Abertura', data.video.base64, data.video.mimeType || 'video/mp4');
-    mediaUrls.video = file.getUrl();
-  }
-
-  // Salvar Fotos Extras (Avarias)
-  if (data.avarias && Array.isArray(data.avarias)) {
-    data.avarias.forEach((avaria, index) => {
-      if (avaria && avaria.base64) {
-        const file = saveBase64File(pedidoFolder, `04_Avaria_${index + 1}`, avaria.base64, avaria.mimeType || 'image/jpeg');
-        mediaUrls.avarias.push(file.getUrl());
-      }
-    });
-  }
-
   const recordId = data.id || Utilities.getUuid();
-  const folderUrl = pedidoFolder.getUrl();
-  const folderId = pedidoFolder.getId();
-  const avariasJson = JSON.stringify(mediaUrls.avarias);
+  const produtoLimpo = formatarNomeProduto(data.produto || '');
 
+  let folderUrl = '';
+  let folderId = '';
+
+  // Tenta criar pasta no Drive para armazenar as mídias com segurança
+  let pedidoFolder = null;
+  try {
+    const mainFolder = getOrCreateMainFolder();
+    const folderName = `${Utilities.formatDate(timestamp, Session.getScriptTimeZone(), "yyyy-MM-dd_HH-mm")}_${data.plataforma || 'SemPlat'}_${data.pedido || 'SemPed'}`;
+    pedidoFolder = mainFolder.createFolder(folderName);
+    pedidoFolder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    folderUrl = pedidoFolder.getUrl();
+    folderId = pedidoFolder.getId();
+  } catch (errFolder) {
+    Logger.log('Aviso ao criar pasta no Drive: ' + errFolder.toString());
+  }
+
+  // Salva mídias no Drive de forma rápida e protegida
+  if (pedidoFolder) {
+    // 1. Etiqueta
+    if (data.etiqueta && data.etiqueta.base64) {
+      try {
+        saveBase64File(pedidoFolder, '01_Etiqueta', data.etiqueta.base64, data.etiqueta.mimeType || 'image/jpeg');
+      } catch (e) {
+        Logger.log('Erro ao salvar etiqueta: ' + e.toString());
+      }
+    }
+
+    // 2. Caixa
+    if (data.caixa && data.caixa.base64) {
+      try {
+        saveBase64File(pedidoFolder, '02_Caixa', data.caixa.base64, data.caixa.mimeType || 'image/jpeg');
+      } catch (e) {
+        Logger.log('Erro ao salvar caixa: ' + e.toString());
+      }
+    }
+
+    // 3. Vídeo
+    if (data.video && data.video.base64) {
+      try {
+        saveBase64File(pedidoFolder, '03_Video_Abertura', data.video.base64, data.video.mimeType || 'video/mp4');
+      } catch (e) {
+        Logger.log('Erro ao salvar vídeo: ' + e.toString());
+      }
+    }
+
+    // 4. Avarias
+    if (data.avarias && Array.isArray(data.avarias)) {
+      data.avarias.forEach((avaria, index) => {
+        if (avaria && avaria.base64) {
+          try {
+            saveBase64File(pedidoFolder, `04_Avaria_${index + 1}`, avaria.base64, avaria.mimeType || 'image/jpeg');
+          } catch (e) {
+            Logger.log(`Erro ao salvar avaria ${index + 1}: ` + e.toString());
+          }
+        }
+      });
+    }
+  }
+
+  // APENAS AS 6 COLUNAS ESSENCIAIS (com produto limpo antes do hífen)
   const newRow = [
     recordId,
     dateStr,
     data.plataforma || '',
-    data.produto || '',
+    produtoLimpo,
     data.pedido || '',
-    data.disputa ? 'SIM' : 'NÃO',
-    folderUrl,
-    mediaUrls.etiqueta,
-    mediaUrls.caixa,
-    mediaUrls.video,
-    avariasJson,
-    folderId
+    data.disputa ? 'SIM' : 'NÃO'
   ];
 
-  // INSERE NA LINHA 2 (Abaixo do cabeçalho)
+  // INSERE NA LINHA 2 (Garante gravação imediata na planilha com 6 colunas)
   pedidosSheet.insertRowAfter(1);
-  pedidosSheet.getRange(2, 1, 1, 12).setValues([newRow]);
+  pedidosSheet.getRange(2, 1, 1, 6).setValues([newRow]);
+  SpreadsheetApp.flush(); // Força a gravação física imediata dos dados
 
   return {
     success: true,
-    message: "Registro e mídias salvos na linha 2 com sucesso!",
+    message: "Registro salvo com sucesso na planilha com 6 colunas!",
     id: recordId,
     folderUrl: folderUrl,
-    dateStr: dateStr
+    dateStr: dateStr,
+    produto: produtoLimpo
   };
-}
-
-// -------------------------------------------------------------
-// DOWNLOAD AUTOMÁTICO DE ZIP DO GOOGLE DRIVE
-// -------------------------------------------------------------
-function handleDownloadZip(ss, id) {
-  const pedidosSheet = ss.getSheetByName('Pedidos');
-  const lastRow = pedidosSheet.getLastRow();
-  if (lastRow <= 1) return ContentService.createTextOutput("Nenhum pedido cadastrado.");
-
-  const rows = pedidosSheet.getRange(2, 1, lastRow - 1, 12).getValues();
-  let targetFolderId = null;
-  let pedidoNome = "Disputa";
-
-  for (let i = 0; i < rows.length; i++) {
-    if (String(rows[i][0]) === String(id)) {
-      targetFolderId = rows[i][11]; // Coluna 12: FolderId
-      pedidoNome = `Disputa_${rows[i][2]}_${rows[i][4]}`;
-      // Fallback: extrai do folderUrl se a coluna 12 estiver vazia
-      if (!targetFolderId && rows[i][6]) {
-        const match = rows[i][6].match(/folders\/([a-zA-Z0-9_-]+)/);
-        if (match) targetFolderId = match[1];
-      }
-      break;
-    }
-  }
-
-  if (!targetFolderId) {
-    return ContentService.createTextOutput("Pasta do pedido não encontrada.");
-  }
-
-  const folder = DriveApp.getFolderById(targetFolderId);
-  const files = folder.getFiles();
-  const blobs = [];
-
-  while (files.hasNext()) {
-    const f = files.next();
-    blobs.push(f.getBlob());
-  }
-
-  if (blobs.length === 0) {
-    return ContentService.createTextOutput("Nenhum arquivo na pasta.");
-  }
-
-  const zipBlob = Utilities.zip(blobs, `${pedidoNome}.zip`);
-  return ContentService.createTextOutput(Utilities.base64Encode(zipBlob.getBytes()))
-    .setMimeType(ContentService.MimeType.TEXT);
 }
 
 // -------------------------------------------------------------
@@ -250,10 +212,11 @@ function handleUpdatePedido(ss, data) {
 
   if (data.data) pedidosSheet.getRange(targetRow, 2).setValue(data.data);
   if (data.plataforma !== undefined) pedidosSheet.getRange(targetRow, 3).setValue(data.plataforma);
-  if (data.produto !== undefined) pedidosSheet.getRange(targetRow, 4).setValue(data.produto);
+  if (data.produto !== undefined) pedidosSheet.getRange(targetRow, 4).setValue(formatarNomeProduto(data.produto));
   if (data.pedido !== undefined) pedidosSheet.getRange(targetRow, 5).setValue(data.pedido);
   if (data.disputa !== undefined) pedidosSheet.getRange(targetRow, 6).setValue(data.disputa ? 'SIM' : 'NÃO');
 
+  SpreadsheetApp.flush();
   return { success: true, message: "Pedido atualizado com sucesso!" };
 }
 
@@ -280,7 +243,18 @@ function handleDeletePedido(ss, id) {
   }
 
   pedidosSheet.deleteRow(targetRow);
+  SpreadsheetApp.flush();
   return { success: true, message: "Pedido excluído com sucesso!" };
+}
+
+// Formatar nome do produto para manter apenas o texto antes do hífen
+function formatarNomeProduto(str) {
+  if (!str || typeof str !== 'string') return '';
+  const idx = str.indexOf('-');
+  if (idx !== -1) {
+    return str.substring(0, idx).trim();
+  }
+  return str.trim();
 }
 
 // -------------------------------------------------------------
@@ -319,10 +293,9 @@ function setupSheetsIfMissing(ss) {
   if (!pedidosSheet) {
     pedidosSheet = ss.insertSheet('Pedidos');
     pedidosSheet.appendRow([
-      'ID', 'Data', 'Plataforma', 'Produto', 'Pedido', 'Disputa', 
-      'Pasta Drive', 'Foto Etiqueta', 'Foto Caixa', 'Vídeo', 'Fotos Avarias', 'FolderId'
+      'ID', 'Data', 'Plataforma', 'Produto', 'Pedido', 'Disputa'
     ]);
-    pedidosSheet.getRange(1, 1, 1, 12).setFontWeight("bold").setBackground("#00bcd4").setFontColor("#ffffff");
+    pedidosSheet.getRange(1, 1, 1, 6).setFontWeight("bold").setBackground("#00bcd4").setFontColor("#ffffff");
     pedidosSheet.setFrozenRows(1);
   }
 
@@ -379,21 +352,12 @@ function getPedidosData(ss) {
   const lastRow = sheet.getLastRow();
   if (lastRow <= 1) return [];
 
-  const values = sheet.getRange(2, 1, lastRow - 1, 12).getValues();
+  const values = sheet.getRange(2, 1, lastRow - 1, 6).getValues();
   const pedidos = [];
 
   for (let i = 0; i < values.length; i++) {
     const row = values[i];
     if (!row[0]) continue;
-
-    let avariasList = [];
-    try {
-      if (row[10]) {
-        avariasList = typeof row[10] === 'string' ? JSON.parse(row[10]) : row[10];
-      }
-    } catch (e) {
-      avariasList = [];
-    }
 
     let dateFormatted = row[1];
     if (dateFormatted instanceof Date) {
@@ -408,16 +372,10 @@ function getPedidosData(ss) {
     pedidos.push({
       id: String(row[0]),
       data: String(dateFormatted),
-      plataforma: row[2],
-      produto: row[3],
-      pedido: row[4],
-      disputa: row[5],
-      pastaDrive: row[6],
-      etiqueta: row[7],
-      caixa: row[8],
-      video: row[9],
-      avarias: avariasList,
-      folderId: row[11] || ''
+      plataforma: row[2] || '',
+      produto: formatarNomeProduto(row[3] || ''),
+      pedido: row[4] || '',
+      disputa: row[5] || 'NÃO'
     });
   }
   return pedidos;

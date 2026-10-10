@@ -203,7 +203,7 @@
                 <th>Produto</th>
                 <th>Pedido</th>
                 <th>Disputa</th>
-                <th style="text-align: center;">Fotos / Ações</th>
+                <th style="text-align: center;">Ações</th>
               </tr>
             </thead>
             <tbody id="pedidosTableBody">
@@ -483,12 +483,31 @@
     <img id="lightboxImg" class="lightbox-image" alt="Visualização ampliada" onclick="event.stopPropagation();" />
   </div>
 
-  <!-- OVERLAY DE LOADING / ENVIANDO -->
+  <!-- OVERLAY DE CARREGAMENTO COM BARRA DE PROGRESSO EM LINHA -->
   <div class="loading-overlay" id="loadingOverlay" style="display: none;">
-    <div class="spinner-box">
-      <div class="spinner"></div>
-      <h4 id="loadingTitle">Enviando Registro...</h4>
-      <p id="loadingSubtitle">Compactando fotos e salvando no Google Drive & Sheets</p>
+    <div class="spinner-box progress-box">
+      <div class="loading-icon-wrap">
+        <i class="fa-solid fa-cloud-arrow-up loading-cloud-icon"></i>
+      </div>
+      <h4 id="loadingTitle">Salvando Registro...</h4>
+      <p id="loadingSubtitle">Processando fotos e enviando para a planilha...</p>
+      
+      <!-- Barra de Carregamento em Linha -->
+      <div class="linear-progress-wrapper">
+        <div class="linear-progress-track">
+          <div class="linear-progress-bar" id="loadingProgressBar" style="width: 0%;"></div>
+        </div>
+        <div class="linear-progress-status">
+          <span id="loadingProgressStep">Iniciando...</span>
+          <span id="loadingProgressPercent" class="progress-percent">0%</span>
+        </div>
+      </div>
+
+      <!-- Alerta Importante Não feche a tela -->
+      <div class="loading-warning-badge">
+        <i class="fa-solid fa-triangle-exclamation"></i>
+        <span>Não feche a tela até o carregamento ser completo!</span>
+      </div>
     </div>
   </div>
 
