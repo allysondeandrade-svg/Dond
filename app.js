@@ -2,6 +2,84 @@
 // DOND - JAVASCRIPT FRONTEND LOGIC & INTEGRATIONS
 // =========================================================================================
 
+// =========================================================================================
+// BANCO DE DADOS LOCAL INDEXEDDB (ANTI-DATA LOSS: SEM LIMITE DE 5MB, 100% PERSISTENTE)
+// =========================================================================================
+const DondDB = {
+  dbName: 'DondAppDB',
+  version: 1,
+  db: null,
+
+  async init() {
+    if (this.db) return this.db;
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(this.dbName, this.version);
+      request.onupgradeneeded = (e) => {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains('pedidos')) {
+          db.createObjectStore('pedidos', { keyPath: 'id' });
+        }
+      };
+      request.onsuccess = (e) => {
+        this.db = e.target.result;
+        resolve(this.db);
+      };
+      request.onerror = (e) => {
+        console.error('Falha ao abrir IndexedDB:', e);
+        reject(e);
+      };
+    });
+  },
+
+  async savePedido(pedido) {
+    if (!pedido || !pedido.id) return;
+    try {
+      const db = await this.init();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('pedidos', 'readwrite');
+        const store = tx.objectStore('pedidos');
+        store.put(pedido);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = (e) => reject(e);
+      });
+    } catch (e) {
+      console.warn('Erro ao salvar no IndexedDB:', e);
+    }
+  },
+
+  async getAllPedidos() {
+    try {
+      const db = await this.init();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('pedidos', 'readonly');
+        const store = tx.objectStore('pedidos');
+        const req = store.getAll();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = (e) => reject(e);
+      });
+    } catch (e) {
+      console.warn('Erro ao ler IndexedDB:', e);
+      return [];
+    }
+  },
+
+  async deletePedido(id) {
+    if (!id) return;
+    try {
+      const db = await this.init();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('pedidos', 'readwrite');
+        const store = tx.objectStore('pedidos');
+        store.delete(id);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = (e) => reject(e);
+      });
+    } catch (e) {
+      console.warn('Erro ao excluir no IndexedDB:', e);
+    }
+  }
+};
+
 // ESTADO GLOBAL DO APP
 const AppState = {
   activeView: 'novoRegistro', // 'novoRegistro' | 'pedidos' | 'configuracoes'
@@ -23,11 +101,11 @@ const AppState = {
 // =========================================================================================
 // INICIALIZAÇÃO
 // =========================================================================================
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   initTheme();
   initNavigation();
   initMediaInputs();
-  initLocalStorageData();
+  await initLocalData();
   renderDropdowns();
   renderConfigLists();
   renderPedidosTable();
@@ -130,7 +208,6 @@ function triggerCapture(step) {
   AppState.currentCaptureStep = step;
 
   if (step === 'video') {
-    // Tenta abrir gravador embutido com timer de 1 minuto
     abrirGravadorVideo1Minuto();
   } else {
     document.getElementById('cameraPhotoInput').click();
@@ -159,7 +236,6 @@ async function abrirGravadorVideo1Minuto() {
     btnIcon.className = 'fa-solid fa-circle-dot';
   } catch (err) {
     console.warn("Acesso à câmera direta indisponível, usando input nativo:", err);
-    // Fallback para input de câmera nativo do celular
     document.getElementById('cameraVideoInput').click();
   }
 }
@@ -269,14 +345,12 @@ function handleCapturedPhoto(base64, mimeType) {
     AppState.mediaData.etiqueta = { base64, mimeType };
     updateEtiquetaUI(base64);
     showToast('Etiqueta capturada! Agora foto da Caixa.', 'info');
-    // Avança para a próxima etapa automaticamente
     setTimeout(() => triggerCapture('caixa'), 450);
 
   } else if (step === 'caixa') {
     AppState.mediaData.caixa = { base64, mimeType };
     updateCaixaUI(base64);
     showToast('Caixa capturada! Agora gravação de Vídeo (1 min).', 'info');
-    // Avança para a próxima etapa (vídeo)
     setTimeout(() => triggerCapture('video'), 450);
 
   } else if (step === 'avarias') {
@@ -395,7 +469,7 @@ function removerAvaria(index) {
 }
 
 // =========================================================================================
-// FORMULÁRIO E SUBMISSÃO DE REGISTRO (UPLOAD EM SEGUNDO PLANO OTIMIZADO)
+// FORMULÁRIO E SUBMISSÃO DE REGISTRO (ANTI-DATA LOSS: INDEXEDDB + GOOGLE DRIVE)
 // =========================================================================================
 function setDisputa(valor) {
   AppState.disputa = valor;
@@ -424,7 +498,7 @@ async function finalizarRegistro() {
   // 1. Exibe a Barra de Carregamento Horizontal com Alerta de Segurança
   showLoading(
     'Salvando Registro...',
-    'Gravando na planilha e no dispositivo. Aguarde...',
+    'Gravando no dispositivo e enviando mídias. Aguarde...',
     15,
     'Preparando dados...'
   );
@@ -434,21 +508,7 @@ async function finalizarRegistro() {
   const dataFormatada = `${String(dataAtual.getDate()).padStart(2, '0')}/${String(dataAtual.getMonth() + 1).padStart(2, '0')}`;
   const produtoLimpo = formatarNomeProduto(produto);
 
-  // Payload completo para upload
-  const payload = {
-    action: 'saveRegistro',
-    id: recordId,
-    plataforma: plataforma,
-    produto: produtoLimpo,
-    pedido: pedido,
-    disputa: AppState.disputa,
-    etiqueta: AppState.mediaData.etiqueta,
-    caixa: AppState.mediaData.caixa,
-    video: AppState.mediaData.video,
-    avarias: AppState.mediaData.avarias
-  };
-
-  // 2. Gravação imediata no LocalStorage com proteção total contra perda
+  // 2. Gravação IMEDIATA no IndexedDB com proteção total contra perda de fotos/vídeos
   const novoItem = {
     id: recordId,
     data: dataFormatada,
@@ -463,22 +523,51 @@ async function finalizarRegistro() {
     avarias: AppState.mediaData.avarias.map(a => a.base64)
   };
 
+  await DondDB.savePedido(novoItem);
   AppState.pedidos.unshift(novoItem);
-  localStorage.setItem('dond_pedidos', JSON.stringify(AppState.pedidos));
 
-  updateLoadingProgress(40, 'Salvo no dispositivo com sucesso!');
+  // Fallback seguro de localStorage (apenas metadados sem estourar limite)
+  try {
+    const lightweight = AppState.pedidos.map(p => ({
+      id: p.id,
+      data: p.data,
+      plataforma: p.plataforma,
+      produto: p.produto,
+      pedido: p.pedido,
+      disputa: p.disputa,
+      pastaDrive: p.pastaDrive
+    }));
+    localStorage.setItem('dond_pedidos', JSON.stringify(lightweight));
+  } catch (quotaErr) {
+    console.warn('LocalStorage com limite de cota; dados salvos com segurança no IndexedDB.');
+  }
 
-  // 3. Envio seguro para o Google Apps Script & Google Sheets
+  updateLoadingProgress(45, 'Salvo no dispositivo com sucesso!');
+
+  // 3. Payload completo para upload no Google Apps Script
+  const payload = {
+    action: 'saveRegistro',
+    id: recordId,
+    plataforma: plataforma,
+    produto: produtoLimpo,
+    pedido: pedido,
+    disputa: AppState.disputa,
+    etiqueta: AppState.mediaData.etiqueta,
+    caixa: AppState.mediaData.caixa,
+    video: AppState.mediaData.video,
+    avarias: AppState.mediaData.avarias
+  };
+
+  // 4. Envio seguro para o Google Apps Script & Google Sheets
   if (AppState.scriptUrl) {
-    updateLoadingProgress(60, 'Enviando para o Google Sheets & Drive...');
+    updateLoadingProgress(60, 'Enviando fotos para o Google Drive...');
     
-    // Animação contínua da barra enquanto a rede processa
     const progressTimer = setInterval(() => {
       const currentVal = parseInt(document.getElementById('loadingProgressPercent').textContent) || 60;
-      if (currentVal < 90) {
-        updateLoadingProgress(currentVal + 3, 'Gravando na planilha...');
+      if (currentVal < 92) {
+        updateLoadingProgress(currentVal + 3, 'Gravando na planilha e no Drive...');
       }
-    }, 350);
+    }, 400);
 
     try {
       const response = await fetch(AppState.scriptUrl, {
@@ -488,27 +577,38 @@ async function finalizarRegistro() {
       });
       clearInterval(progressTimer);
 
-      updateLoadingProgress(95, 'Confirmando gravação...');
+      updateLoadingProgress(96, 'Confirmando gravação...');
       const res = await response.json();
 
       if (res.success) {
-        const idx = AppState.pedidos.findIndex(p => p.id === payload.id);
-        if (idx !== -1 && res.folderUrl) {
-          AppState.pedidos[idx].pastaDrive = res.folderUrl;
-          localStorage.setItem('dond_pedidos', JSON.stringify(AppState.pedidos));
+        if (res.id) {
+          const oldId = novoItem.id;
+          novoItem.id = res.id;
+          await DondDB.deletePedido(oldId);
         }
-        updateLoadingProgress(100, 'Salvo com sucesso!');
+        if (res.folderUrl) {
+          novoItem.pastaDrive = res.folderUrl;
+        }
+        if (res.mediaUrls) {
+          if (res.mediaUrls.etiqueta) novoItem.etiqueta = res.mediaUrls.etiqueta;
+          if (res.mediaUrls.caixa) novoItem.caixa = res.mediaUrls.caixa;
+          if (res.mediaUrls.video) novoItem.video = res.mediaUrls.video;
+          if (res.mediaUrls.avarias && res.mediaUrls.avarias.length) novoItem.avarias = res.mediaUrls.avarias;
+        }
+        await DondDB.savePedido(novoItem);
+
+        updateLoadingProgress(100, 'Salvo no Google Drive!');
         await new Promise(r => setTimeout(r, 450));
-        showToast('Registro e anotação gravados com sucesso na planilha!', 'success');
+        showToast('Registro e mídias salvos com sucesso no Google Drive!', 'success');
       } else {
         throw new Error(res.error || 'Erro no servidor do Apps Script');
       }
     } catch (err) {
       clearInterval(progressTimer);
-      console.warn('Aviso de conexão com o Sheets:', err);
-      updateLoadingProgress(100, 'Salvo localmente!');
+      console.warn('Aviso de conexão com nuvem:', err);
+      updateLoadingProgress(100, 'Salvo no aparelho!');
       await new Promise(r => setTimeout(r, 450));
-      showToast('Registro garantido no aplicativo! Verifique a conexão com o Google Sheets.', 'info');
+      showToast('Fotos garantidas no seu aparelho! Falha de rede com o Drive.', 'info');
     }
   } else {
     updateLoadingProgress(100, 'Concluído!');
@@ -516,14 +616,12 @@ async function finalizarRegistro() {
     showToast('Registro salvo no histórico local.', 'success');
   }
 
-  // Fecha loading e reabilita botão
   hideLoading();
   if (btnFinalizar) {
     btnFinalizar.disabled = false;
     btnFinalizar.style.opacity = '1';
   }
 
-  // Limpa formulário e navega com segurança para a tabela
   resetRegistroForm();
   switchView('pedidos');
 }
@@ -562,14 +660,11 @@ function iniciarLeitorBarcode() {
     { facingMode: "environment" },
     qrConfig,
     (decodedText) => {
-      // Sucesso na leitura do código de barras
       document.getElementById('inputPedido').value = decodedText;
       showToast(`Código lido: ${decodedText}`, 'success');
       fecharLeitorBarcode();
     },
-    (errorMessage) => {
-      // Leitura em andamento / frame sem código
-    }
+    () => {}
   ).catch(err => {
     console.warn("Erro ao iniciar leitor de código:", err);
     showToast("Permissão de câmera necessária para escanear.", "error");
@@ -597,7 +692,6 @@ function abrirModalEdicao(index) {
   document.getElementById('editData').value = formatarDataSimples(item.data);
   document.getElementById('editPedido').value = item.pedido || '';
 
-  // Popula selects
   const selPlat = document.getElementById('editPlataforma');
   const selProd = document.getElementById('editProduto');
 
@@ -630,14 +724,13 @@ async function salvarEdicaoPedido() {
   const index = AppState.pedidos.findIndex(p => p.id === id);
   if (index === -1) return;
 
-  // Atualiza estado local imediatamente
   AppState.pedidos[index].data = dataVal;
   AppState.pedidos[index].plataforma = plataforma;
   AppState.pedidos[index].produto = produto;
   AppState.pedidos[index].pedido = pedido;
   AppState.pedidos[index].disputa = editDisputaValor ? 'SIM' : 'NÃO';
 
-  localStorage.setItem('dond_pedidos', JSON.stringify(AppState.pedidos));
+  await DondDB.savePedido(AppState.pedidos[index]);
   renderPedidosTable();
   fecharModalEdicao();
   showToast('Pedido atualizado no app!', 'success');
@@ -673,13 +766,11 @@ async function excluirPedido(index) {
   }
 
   const id = item.id;
-  // Remove localmente imediatamente
+  await DondDB.deletePedido(id);
   AppState.pedidos.splice(index, 1);
-  localStorage.setItem('dond_pedidos', JSON.stringify(AppState.pedidos));
   renderPedidosTable();
   showToast('Registro excluído!', 'info');
 
-  // Sincroniza com Google Sheets
   if (AppState.scriptUrl) {
     try {
       fetch(AppState.scriptUrl, {
@@ -714,7 +805,6 @@ function formatarDataSimples(dataStr) {
         return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
       }
     }
-    // Se for formato dd/mm ou dd/mm/yyyy hh:mm, extrai apenas dd/mm
     const match = dataStr.match(/^(\d{2}\/\d{2})/);
     if (match) return match[1];
   }
@@ -722,7 +812,7 @@ function formatarDataSimples(dataStr) {
 }
 
 // =========================================================================================
-// VIEW 2: HISTÓRICO DE PEDIDOS & TABELA
+// VIEW 2: HISTÓRICO DE PEDIDOS & TABELA COM AÇÕES COMPLETAS
 // =========================================================================================
 function renderPedidosTable(pedidosParaRenderizar = null) {
   const list = pedidosParaRenderizar || AppState.pedidos;
@@ -740,12 +830,14 @@ function renderPedidosTable(pedidosParaRenderizar = null) {
     const isSim = (item.disputa || '').toUpperCase() === 'SIM';
     const dataFormatada = formatarDataSimples(item.data);
     const produtoFormatado = formatarNomeProduto(item.produto);
+    const driveLink = item.pastaDrive && item.pastaDrive !== '#' ? item.pastaDrive : null;
+
     return `
       <tr>
-        <td style="white-space: nowrap; font-weight: 700;">${dataFormatada}</td>
-        <td>${item.plataforma || '-'}</td>
-        <td style="font-weight: 700;">${produtoFormatado || '-'}</td>
-        <td><code>${item.pedido || '-'}</code></td>
+        <td style="white-space: nowrap; font-weight: 700; cursor: pointer;" onclick="abrirModalMidias(${idx})">${dataFormatada}</td>
+        <td style="cursor: pointer;" onclick="abrirModalMidias(${idx})">${item.plataforma || '-'}</td>
+        <td style="font-weight: 700; cursor: pointer;" onclick="abrirModalMidias(${idx})">${produtoFormatado || '-'}</td>
+        <td style="cursor: pointer;" onclick="abrirModalMidias(${idx})"><code>${item.pedido || '-'}</code></td>
         <td>
           <span class="table-badge-disputa ${isSim ? 'sim' : 'nao'}">
             ${isSim ? 'SIM' : 'NÃO'}
@@ -753,12 +845,29 @@ function renderPedidosTable(pedidosParaRenderizar = null) {
         </td>
         <td>
           <div class="table-actions">
-            <button class="action-icon-btn" onclick="downloadMidias(${idx})" title="Baixar ZIP (Fotos agrupadas + Vídeo)">
+            <!-- 1. Visualizar Fotos & Mídias -->
+            <button class="action-icon-btn" onclick="abrirModalMidias(${idx})" title="Visualizar Fotos & Mídias" style="color: var(--primary);">
+              <i class="fa-solid fa-images"></i>
+            </button>
+            <!-- 2. Baixar Kit Shopee (3 arquivos) -->
+            <button class="action-icon-btn" onclick="downloadMidias(${idx})" title="Baixar Kit Shopee (3 arquivos agrupados)" style="color: #f97316;">
+              <i class="fa-solid fa-file-zipper"></i>
+            </button>
+            <!-- 3. Baixar Todas as Fotos Individuais (ZIP Original) -->
+            <button class="action-icon-btn" onclick="downloadZipGeral(${idx})" title="Baixar ZIP com todas as fotos originais">
               <i class="fa-solid fa-download"></i>
             </button>
+            <!-- 4. Abrir Pasta no Google Drive -->
+            ${driveLink ? `
+              <a class="action-icon-btn" href="${driveLink}" target="_blank" title="Abrir Pasta no Google Drive" style="color: #38bdf8;">
+                <i class="fa-brands fa-google-drive"></i>
+              </a>
+            ` : ''}
+            <!-- 5. Editar Pedido -->
             <button class="action-icon-btn" onclick="abrirModalEdicao(${idx})" title="Editar Pedido">
               <i class="fa-solid fa-pen-to-square"></i>
             </button>
+            <!-- 6. Excluir Pedido -->
             <button class="action-icon-btn" style="color: var(--danger);" onclick="excluirPedido(${idx})" title="Excluir Pedido">
               <i class="fa-solid fa-trash-can"></i>
             </button>
@@ -791,14 +900,11 @@ let currentSelectedPedidoIndex = null;
 
 function formatDriveMediaUrl(url) {
   if (!url) return '';
-  // Se for Base64 (salvo localmente), retorna direto
   if (url.startsWith('data:')) return url;
 
-  // Se for link do Google Drive (/file/d/ID/view ou open?id=ID ou uc?id=ID)
   const match = url.match(/\/d\/([a-zA-Z0-9_-]+)/) || url.match(/id=([a-zA-Z0-9_-]+)/);
   if (match && match[1]) {
     const fileId = match[1];
-    // Formato de alta resolução do Google Drive Thumbnail
     return `https://drive.google.com/thumbnail?id=${fileId}&sz=w1600`;
   }
   return url;
@@ -815,7 +921,13 @@ function abrirModalMidias(index) {
   const driveBtn = document.getElementById('btnModalDriveFolder');
 
   title.textContent = `Pedido: ${item.pedido || item.produto}`;
-  driveBtn.href = item.pastaDrive && item.pastaDrive !== '#' ? item.pastaDrive : 'https://drive.google.com';
+  if (item.pastaDrive && item.pastaDrive !== '#') {
+    driveBtn.href = item.pastaDrive;
+    driveBtn.style.display = 'inline-flex';
+  } else {
+    driveBtn.href = 'https://drive.google.com';
+    driveBtn.style.display = 'inline-flex';
+  }
 
   let html = '';
 
@@ -863,7 +975,17 @@ function abrirModalMidias(index) {
   }
 
   if (!html) {
-    html = '<p style="text-align:center; color:#94a3b8; padding: 20px;">Nenhuma foto/vídeo anexada a este registro.</p>';
+    html = `
+      <div style="text-align:center; padding: 25px 15px;">
+        <i class="fa-solid fa-cloud-arrow-down" style="font-size: 2.2rem; color: #94a3b8; margin-bottom: 12px; display: block;"></i>
+        <p style="color:#94a3b8; font-size: 0.95rem; margin-bottom: 12px;">Nenhuma foto/vídeo carregada nesta sessão.</p>
+        ${item.pastaDrive && item.pastaDrive !== '#' ? `
+          <a href="${item.pastaDrive}" target="_blank" class="btn-primary-action" style="display:inline-flex; width:auto; text-decoration:none; padding: 8px 18px; font-size: 0.9rem;">
+            <i class="fa-brands fa-google-drive"></i> Acessar Fotos no Google Drive
+          </a>
+        ` : ''}
+      </div>
+    `;
   }
 
   content.innerHTML = html;
@@ -906,24 +1028,21 @@ async function mergeEtiquetaECaixa(etiquetaUrl, caixaUrl) {
   const totalWidth = w1 + w2;
   const canvas = document.createElement('canvas');
   canvas.width = totalWidth;
-  canvas.height = targetHeight + 60; // 60px para cabeçalho com identificação
+  canvas.height = targetHeight + 60;
 
   const ctx = canvas.getContext('2d');
   ctx.fillStyle = '#0f172a';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // Faixas e textos superiores
   ctx.fillStyle = '#ffffff';
   ctx.font = 'bold 28px Plus Jakarta Sans, sans-serif';
   ctx.textAlign = 'center';
   ctx.fillText('1. ETIQUETA DE ENVIO', w1 / 2, 40);
   ctx.fillText('2. EMBALAGEM / CAIXA', w1 + (w2 / 2), 40);
 
-  // Desenhar imagens
   ctx.drawImage(img1, 0, 60, w1, targetHeight);
   ctx.drawImage(img2, w1, 60, w2, targetHeight);
 
-  // Linha divisória central
   ctx.strokeStyle = '#38bdf8';
   ctx.lineWidth = 4;
   ctx.beginPath();
@@ -981,10 +1100,8 @@ async function mergeAvariasMosaico(avariasUrls) {
     const y = headerHeight + (r * cellHeight);
 
     const img = images[i];
-    // Desenha proporcionalmente centralizado
     ctx.drawImage(img, x + 10, y + 10, cellWidth - 20, cellHeight - 20);
 
-    // Tag identificadora no canto da foto
     ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
     ctx.fillRect(x + 20, y + 20, 160, 44);
     ctx.fillStyle = '#38bdf8';
@@ -999,14 +1116,17 @@ async function mergeAvariasMosaico(avariasUrls) {
 function loadImageElement(src) {
   return new Promise((resolve, reject) => {
     const img = new Image();
-    img.crossOrigin = 'anonymous';
+    if (!src.startsWith('data:')) {
+      img.crossOrigin = 'anonymous';
+    }
     img.onload = () => resolve(img);
     img.onerror = (err) => {
-      // Tenta fallback com proxy drive thumbnail se necessário
       const formatted = formatDriveMediaUrl(src);
       if (formatted !== src) {
         const retryImg = new Image();
-        retryImg.crossOrigin = 'anonymous';
+        if (!formatted.startsWith('data:')) {
+          retryImg.crossOrigin = 'anonymous';
+        }
         retryImg.onload = () => resolve(retryImg);
         retryImg.onerror = reject;
         retryImg.src = formatted;
@@ -1014,7 +1134,7 @@ function loadImageElement(src) {
         reject(err);
       }
     };
-    img.src = formatDriveMediaUrl(src);
+    img.src = src.startsWith('data:') ? src : formatDriveMediaUrl(src);
   });
 }
 
@@ -1024,14 +1144,16 @@ function canvasToBlob(canvas) {
   });
 }
 
-// 3. Download exclusivo do KIT SHOPEE (Exatamente até 3 arquivos)
+// =========================================================================================
+// DOWNLOAD DO KIT SHOPEE (MÁXIMO 3 ARQUIVOS: ETIQUETA+CAIXA, VÍDEO, PAINEL DE AVARIAS)
+// =========================================================================================
 async function downloadKitShopee() {
   if (currentSelectedPedidoIndex === null) return;
   const item = AppState.pedidos[currentSelectedPedidoIndex];
   if (!item) return;
 
   const baseName = `Shopee_${(item.pedido || item.produto || 'Disputa')}`.replace(/[\/\\:*?"<>|]/g, '_');
-  showLoading('Gerando Kit Shopee...', 'Mesclando fotos em exatamente 3 arquivos...');
+  showLoading('Gerando Kit Shopee...', 'Mesclando fotos em exatamente 3 arquivos...', 20, 'Preparando fotos...');
 
   try {
     const zip = new JSZip();
@@ -1040,6 +1162,7 @@ async function downloadKitShopee() {
 
     // Arquivo 1: Etiqueta + Caixa mescladas
     if (item.etiqueta || item.caixa) {
+      updateLoadingProgress(40, 'Mesclando Etiqueta e Caixa...');
       const mergedFoto1 = await mergeEtiquetaECaixa(item.etiqueta, item.caixa);
       if (mergedFoto1) {
         folder.file('01_Etiqueta_e_Caixa.jpg', mergedFoto1);
@@ -1049,6 +1172,7 @@ async function downloadKitShopee() {
 
     // Arquivo 2: Vídeo de abertura
     if (item.video) {
+      updateLoadingProgress(65, 'Empacotando Vídeo...');
       const videoBlob = await fetchMediaBlob(item.video);
       if (videoBlob) {
         folder.file('02_Video_Abertura.mp4', videoBlob);
@@ -1058,6 +1182,7 @@ async function downloadKitShopee() {
 
     // Arquivo 3: Mosaico único com todas as fotos de avarias
     if (item.avarias && item.avarias.length > 0) {
+      updateLoadingProgress(85, 'Gerando painel de fotos de avarias...');
       const mergedAvarias = await mergeAvariasMosaico(item.avarias);
       if (mergedAvarias) {
         folder.file('03_Mosaico_Avarias.jpg', mergedAvarias);
@@ -1066,11 +1191,14 @@ async function downloadKitShopee() {
     }
 
     if (filesCount > 0) {
+      updateLoadingProgress(95, 'Compactando Kit Shopee...');
       const content = await zip.generateAsync({ type: 'blob' });
       saveAs(content, `${baseName}_Kit3Arquivos.zip`);
+      updateLoadingProgress(100, 'Kit Shopee pronto!');
+      await new Promise(r => setTimeout(r, 400));
       showToast('Kit Shopee de 3 arquivos gerado com sucesso!', 'success');
     } else {
-      showToast('Nenhuma mídia encontrada para gerar o Kit.', 'error');
+      showToast('Nenhuma mídia encontrada para este registro.', 'error');
     }
   } catch (err) {
     console.error(err);
@@ -1080,65 +1208,106 @@ async function downloadKitShopee() {
   }
 }
 
-// =========================================================================================
-// DOWNLOAD AUTOMÁTICO DO KIT EM 3 ARQUIVOS (ETIQUETA+CAIXA MESCLADAS, VÍDEO E MOSAICO DE AVARIAS)
-// =========================================================================================
+// Download do Kit Shopee chamado a partir do botão da tabela
 async function downloadMidias(index) {
+  currentSelectedPedidoIndex = index;
+  await downloadKitShopee();
+}
+
+// Download do ZIP Geral chamado a partir do Modal
+async function downloadZipDoPedidoAtual() {
+  if (currentSelectedPedidoIndex === null) {
+    showToast('Nenhum pedido selecionado.', 'error');
+    return;
+  }
+  await downloadZipGeral(currentSelectedPedidoIndex);
+}
+
+// =========================================================================================
+// DOWNLOAD DO ZIP COM TODAS AS FOTOS ORIGINAIS INDIVIDUAIS + VÍDEO
+// =========================================================================================
+async function downloadZipGeral(index) {
   currentSelectedPedidoIndex = index;
   const item = AppState.pedidos[index];
   if (!item) return;
 
   const baseName = `Disputa_${(item.plataforma || 'Plat')}_${(item.pedido || item.produto || 'Pedido')}`.replace(/[\/\\:*?"<>|]/g, '_');
-  showLoading('Gerando Arquivo ZIP...', 'Agrupando fotos e preparando Kit de 3 arquivos...', 10, 'Iniciando');
+  showLoading('Preparando Download...', 'Agrupando todas as mídias do pedido...', 20, 'Verificando fotos...');
 
   try {
-    const zip = new JSZip();
-    const folder = zip.folder(baseName);
-    let filesCount = 0;
+    // 1. Se possuir mídias salvas localmente no IndexedDB
+    const hasLocalMedia = (item.etiqueta && item.etiqueta.startsWith('data:')) ||
+                          (item.caixa && item.caixa.startsWith('data:')) ||
+                          (item.video && item.video.startsWith('data:')) ||
+                          (item.avarias && item.avarias.some(a => a && a.startsWith('data:')));
 
-    // 1. Arquivo 1: Etiqueta + Caixa mescladas lado a lado
-    if (item.etiqueta || item.caixa) {
-      updateLoadingProgress(35, 'Mesclando Etiqueta e Caixa...');
-      const mergedFoto1 = await mergeEtiquetaECaixa(item.etiqueta, item.caixa);
-      if (mergedFoto1) {
-        folder.file('01_Etiqueta_e_Caixa.jpg', mergedFoto1);
-        filesCount++;
+    if (hasLocalMedia) {
+      updateLoadingProgress(45, 'Empacotando mídias locais...');
+      const zip = new JSZip();
+      const folder = zip.folder(baseName);
+      let count = 0;
+
+      if (item.etiqueta) {
+        const b = await fetchMediaBlob(item.etiqueta);
+        if (b) { folder.file('01_Etiqueta.jpg', b); count++; }
+      }
+      if (item.caixa) {
+        const b = await fetchMediaBlob(item.caixa);
+        if (b) { folder.file('02_Caixa.jpg', b); count++; }
+      }
+      if (item.video) {
+        const b = await fetchMediaBlob(item.video);
+        if (b) { folder.file('03_Video_Abertura.mp4', b); count++; }
+      }
+      if (item.avarias && item.avarias.length > 0) {
+        for (let i = 0; i < item.avarias.length; i++) {
+          const b = await fetchMediaBlob(item.avarias[i]);
+          if (b) { folder.file(`04_Avaria_${i + 1}.jpg`, b); count++; }
+        }
+      }
+
+      if (count > 0) {
+        updateLoadingProgress(85, 'Gerando arquivo .ZIP...');
+        const content = await zip.generateAsync({ type: 'blob' });
+        saveAs(content, `${baseName}_FotosCompletas.zip`);
+        updateLoadingProgress(100, 'Download pronto!');
+        await new Promise(r => setTimeout(r, 400));
+        showToast('Download do ZIP completo concluído com sucesso!', 'success');
+        return;
       }
     }
 
-    // 2. Arquivo 2: Vídeo de abertura
-    if (item.video) {
-      updateLoadingProgress(60, 'Empacotando Vídeo...');
-      const videoBlob = await fetchMediaBlob(item.video);
-      if (videoBlob) {
-        folder.file('02_Video_Abertura.mp4', videoBlob);
-        filesCount++;
+    // 2. Se as fotos estiverem no Google Drive: solicita ZIP gerado pelo servidor
+    if (AppState.scriptUrl && item.id) {
+      updateLoadingProgress(55, 'Solicitando empacotamento ZIP do Google Drive...');
+      try {
+        const res = await fetch(`${AppState.scriptUrl}?action=downloadZip&id=${encodeURIComponent(item.id)}`);
+        const json = await res.json();
+        if (json.success && json.base64) {
+          updateLoadingProgress(90, 'Processando ZIP recebido...');
+          const zipBlob = await fetchMediaBlob('data:application/zip;base64,' + json.base64);
+          saveAs(zipBlob, json.fileName || `${baseName}.zip`);
+          updateLoadingProgress(100, 'Concluído!');
+          await new Promise(r => setTimeout(r, 400));
+          showToast('ZIP baixado diretamente do Google Drive com sucesso!', 'success');
+          return;
+        }
+      } catch (eServerZip) {
+        console.warn('Tentativa de ZIP pelo servidor falhou:', eServerZip);
       }
     }
 
-    // 3. Arquivo 3: Mosaico único com todas as fotos de avarias
-    if (item.avarias && item.avarias.length > 0) {
-      updateLoadingProgress(80, 'Gerando painel de fotos de avarias...');
-      const mergedAvarias = await mergeAvariasMosaico(item.avarias);
-      if (mergedAvarias) {
-        folder.file('03_Mosaico_Avarias.jpg', mergedAvarias);
-        filesCount++;
-      }
+    // 3. Fallback: abre a pasta no Google Drive diretamente
+    if (item.pastaDrive && item.pastaDrive !== '#') {
+      window.open(item.pastaDrive, '_blank');
+      showToast('Abrindo pasta com todas as fotos no Google Drive...', 'info');
+      return;
     }
 
-    if (filesCount > 0) {
-      updateLoadingProgress(95, 'Compactando arquivo .ZIP...');
-      const content = await zip.generateAsync({ type: 'blob' });
-      saveAs(content, `${baseName}_KitCompleto.zip`);
-      updateLoadingProgress(100, 'Download pronto!');
-      await new Promise(r => setTimeout(r, 400));
-      showToast('Download do ZIP com fotos agrupadas concluído!', 'success');
-    } else {
-      showToast('Nenhuma mídia encontrada para este registro.', 'error');
-    }
+    showToast('Nenhuma mídia encontrada para este registro.', 'error');
   } catch (err) {
-    console.error(err);
-    showToast('Erro ao compactar ZIP: ' + err.message, 'error');
+    console.error('Erro ao baixar mídias:', err);
+    showToast('Erro ao processar download: ' + err.message, 'error');
   } finally {
     hideLoading();
   }
@@ -1175,7 +1344,6 @@ async function fetchMediaBlob(url) {
 function toggleAccordion(accId) {
   const item = document.getElementById(accId);
   const isOpen = item.classList.contains('open');
-  // Fecha outros se quiser ou permite múltiplos abertos
   item.classList.toggle('open', !isOpen);
 }
 
@@ -1183,7 +1351,6 @@ function renderDropdowns() {
   const selectProd = document.getElementById('selectProduto');
   const selectPlat = document.getElementById('selectPlataforma');
 
-  // Mapeia produtos formatando antes do hífen e removendo duplicatas
   const produtosLimpos = [...new Set(AppState.produtos.map(p => formatarNomeProduto(p)))];
 
   selectProd.innerHTML = '<option value="">Selecione o produto cadastrado...</option>' +
@@ -1325,14 +1492,48 @@ async function carregarDadosDoServidor(notificar = false) {
         AppState.plataformas = data.plataformas;
       }
       if (data.pedidos && Array.isArray(data.pedidos)) {
-        AppState.pedidos = data.pedidos.map(p => ({
-          ...p,
-          produto: formatarNomeProduto(p.produto)
-        }));
+        // Carrega registros locais do IndexedDB para mesclagem inteligente
+        const dbItems = await DondDB.getAllPedidos();
+        const localMap = new Map(dbItems.map(p => [p.id, p]));
+
+        AppState.pedidos = data.pedidos.map(remoteItem => {
+          const local = localMap.get(remoteItem.id);
+          return {
+            ...remoteItem,
+            produto: formatarNomeProduto(remoteItem.produto),
+            // Preserva mídias locais ou do servidor sem nunca apagar
+            pastaDrive: (remoteItem.pastaDrive && remoteItem.pastaDrive !== '#')
+              ? remoteItem.pastaDrive
+              : (local && local.pastaDrive ? local.pastaDrive : '#'),
+            etiqueta: remoteItem.etiqueta || (local ? local.etiqueta : ''),
+            caixa: remoteItem.caixa || (local ? local.caixa : ''),
+            video: remoteItem.video || (local ? local.video : ''),
+            avarias: (remoteItem.avarias && remoteItem.avarias.length)
+              ? remoteItem.avarias
+              : (local && local.avarias ? local.avarias : [])
+          };
+        });
+
+        // Atualiza IndexedDB com os dados mesclados
+        for (const item of AppState.pedidos) {
+          await DondDB.savePedido(item);
+        }
       }
 
       saveLocalConfigs();
-      localStorage.setItem('dond_pedidos', JSON.stringify(AppState.pedidos));
+      try {
+        const lightweight = AppState.pedidos.map(p => ({
+          id: p.id,
+          data: p.data,
+          plataforma: p.plataforma,
+          produto: p.produto,
+          pedido: p.pedido,
+          disputa: p.disputa,
+          pastaDrive: p.pastaDrive
+        }));
+        localStorage.setItem('dond_pedidos', JSON.stringify(lightweight));
+      } catch (e) {}
+
       renderDropdowns();
       renderConfigLists();
       renderPedidosTable();
@@ -1371,22 +1572,38 @@ function setAppTheme(themeName, colorHex, notify = true) {
   if (notify) showToast(`Tema alterado com sucesso!`, 'success');
 }
 
-// LOCALSTORAGE
-function initLocalStorageData() {
+// INICIALIZAÇÃO DE DADOS LOCAIS (INDEXEDDB COM MIGRAÇÃO DE LOCALSTORAGE)
+async function initLocalData() {
   const localProd = localStorage.getItem('dond_produtos');
   const localPlat = localStorage.getItem('dond_plataformas');
-  const localPed = localStorage.getItem('dond_pedidos');
 
   if (localProd) AppState.produtos = JSON.parse(localProd);
   if (localPlat) AppState.plataformas = JSON.parse(localPlat);
-  if (localPed) {
-    AppState.pedidos = JSON.parse(localPed);
+
+  let dbPedidos = await DondDB.getAllPedidos();
+
+  // Migração caso o IndexedDB esteja limpo
+  if (!dbPedidos || dbPedidos.length === 0) {
+    const localPed = localStorage.getItem('dond_pedidos');
+    if (localPed) {
+      try {
+        dbPedidos = JSON.parse(localPed);
+        if (Array.isArray(dbPedidos)) {
+          for (const item of dbPedidos) {
+            await DondDB.savePedido(item);
+          }
+        }
+      } catch (e) {}
+    }
+  }
+
+  if (dbPedidos && dbPedidos.length > 0) {
+    AppState.pedidos = dbPedidos;
   } else {
-    // Dados de exemplo inicial como na imagem do usuário
     AppState.pedidos = [
       {
         id: '1',
-        data: '07/10 14:30',
+        data: '07/10',
         plataforma: 'Shopee',
         produto: 'JBC FG 4 RISK',
         pedido: '1911818181',
@@ -1398,6 +1615,7 @@ function initLocalStorageData() {
         avarias: []
       }
     ];
+    await DondDB.savePedido(AppState.pedidos[0]);
   }
 }
 
@@ -1486,7 +1704,7 @@ function showToast(message, type = 'info') {
 
   setTimeout(() => {
     toast.style.opacity = '0';
-    toast.style.transform = 'translateY(10px)';
+    toast.style.transform = 'translateY(-12px) scale(0.92)';
     setTimeout(() => toast.remove(), 300);
   }, 3200);
 }
